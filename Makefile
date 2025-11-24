@@ -28,7 +28,7 @@ PLATFORMS ?= linux_amd64 linux_arm64
 # ====================================================================================
 # Setup Go
 
-GO_REQUIRED_VERSION = 1.21
+GO_REQUIRED_VERSION = 1.24
 GOLANGCILINT_VERSION = 1.54.2
 
 # -include will silently skip missing files, which allows us

@@ -55,10 +55,8 @@ func TerraformSetupBuilder(version, providerSource, providerVersion string) terr
 			return ps, errors.Wrap(err, errGetProviderConfig)
 		}
 
-		// Track ProviderConfig usage
-		if err := c.Update(ctx, pc); err != nil {
-			return ps, errors.Wrap(err, errTrackUsage)
-		}
+		// Note: Usage tracking is handled by Crossplane's core controllers.
+		// We simply reference the ProviderConfig here for credential extraction.
 
 		// Extract credentials from the referenced secret
 		cd := pc.Spec.Credentials
