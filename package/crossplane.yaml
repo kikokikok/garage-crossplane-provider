@@ -16,7 +16,7 @@ metadata:
       
       ## Features
       - Native implementation (no Terraform/Upjet)
-      - Supports only Crossplane v2+ with namespaced resources  
+      - Supports only Crossplane v2+ with namespaced resources
       - Supports only Garage v2+ Admin API
       
       ## Installation

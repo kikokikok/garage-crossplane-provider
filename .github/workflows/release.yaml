@@ -54,8 +54,8 @@ jobs:
 
       - name: Update Crossplane package metadata image
         run: |
-          # Update the image reference in the existing crossplane.yaml
-          # Use yq or a more precise sed pattern to update only the controller image
+          # Update the image reference in the existing crossplane.yaml using sed
+          # Pattern matches the full image URL to avoid unintended replacements
           sed -i "s|image: ghcr.io/kikokikok/garage-crossplane-provider:.*|image: ${REGISTRY}/${IMAGE_NAME}:${{ steps.get_version.outputs.VERSION }}|" package/crossplane.yaml
 
       - name: Log in to Container registry
@@ -191,8 +191,8 @@ jobs:
 
       - name: Update Crossplane package metadata image for Upbound
         run: |
-          # Update the image reference in the existing crossplane.yaml
-          # Use yq or a more precise sed pattern to update only the controller image
+          # Update the image reference in the existing crossplane.yaml using sed
+          # Pattern matches the full image URL to avoid unintended replacements
           sed -i "s|image: ghcr.io/kikokikok/garage-crossplane-provider:.*|image: ${REGISTRY}/${IMAGE_NAME}:${{ steps.get_version.outputs.VERSION }}|" package/crossplane.yaml
 
       - name: Install UP CLI
