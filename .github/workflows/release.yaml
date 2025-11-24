@@ -211,7 +211,13 @@ jobs:
         env:
           UP_TOKEN: ${{ secrets.UPBOUND_TOKEN }}
         run: |
-          echo "${UP_TOKEN}" | up login --token-stdin
+          # verify up binary exists and version
+          up --version || true
+          # show login help to detect supported flags
+          up login --help || true
+
+          # Login using the token directly (preferred)
+          up login --token "${UP_TOKEN}"
 
       - name: Build and push to Upbound
         env:
