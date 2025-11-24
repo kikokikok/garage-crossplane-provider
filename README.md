@@ -33,59 +33,46 @@ This provider supports the following Garage resources:
   - Configure read/write/owner permissions
   - Cross-resource references
 
-## Installation
+## Quick Start
 
-### Prerequisites
-
-- Kubernetes cluster (v1.25+)
-- Crossplane (v1.14+)
-- Garage cluster with admin API access
-
-### Install the Provider
+### Installation
 
 ```bash
 # Install the provider (once published)
 kubectl crossplane install provider kikokikok/provider-garage:v0.1.0
-
-# Or use a Provider manifest
-cat <<EOF | kubectl apply -f -
-apiVersion: pkg.crossplane.io/v1
-kind: Provider
-metadata:
-  name: provider-garage
-spec:
-  package: kikokikok/provider-garage:v0.1.0
-EOF
 ```
 
-### Configure Provider Credentials
-
-Create a secret with your Garage credentials:
+### Configure Provider
 
 ```bash
+# Create credentials secret
 kubectl create secret generic garage-credentials \
   --from-literal=credentials='{
     "garage_endpoint": "http://garage.example.com:3903",
     "garage_admin_token": "your-admin-token-here"
   }' \
   -n crossplane-system
+
+# Create ProviderConfig
+kubectl apply -f examples/providerconfig/providerconfig.yaml
 ```
 
-Create a ProviderConfig:
+### Create Resources
 
-```yaml
-apiVersion: garage.crossplane.io/v1beta1
-kind: ProviderConfig
-metadata:
-  name: default
-spec:
-  credentials:
-    source: Secret
-    secretRef:
-      namespace: crossplane-system
-      name: garage-credentials
-      key: credentials
+```bash
+# Create a bucket
+kubectl apply -f examples/bucket/bucket.yaml
+
+# Create an access key
+kubectl apply -f examples/key/key.yaml
 ```
+
+## Documentation
+
+- **[Getting Started Guide](GETTING_STARTED.md)** - Step-by-step installation and usage
+- **[Architecture](ARCHITECTURE.md)** - Technical architecture and design decisions
+- **[Contributing](CONTRIBUTING.md)** - How to contribute to the project
+- **[Implementation Summary](IMPLEMENTATION_SUMMARY.md)** - Complete implementation overview
 
 ## Usage Examples
 
@@ -125,10 +112,6 @@ spec:
     namespace: my-app
 ```
 
-The connection secret will contain:
-- `access_key_id`
-- `secret_access_key`
-
 ### Grant Key Access to Bucket
 
 ```yaml
@@ -166,22 +149,7 @@ User namespace: my-app
   Connection Secret (in my-app namespace)
 ```
 
-### Building v2 Compositions
-
-You can create v2 XRDs that compose these managed resources:
-
-```yaml
-apiVersion: apiextensions.crossplane.io/v2
-kind: CompositeResourceDefinition
-metadata:
-  name: garagebuckets.s3.example.com
-spec:
-  scope: Namespaced  # v2 default
-  group: s3.example.com
-  names:
-    kind: GarageBucket
-    plural: garagebuckets
-```
+See [examples/composition/](examples/composition/) for complete v2 XRD and Composition examples.
 
 ## Development
 
@@ -204,7 +172,7 @@ make test
 
 ### Code Generation
 
-This provider uses Upjet to generate CRDs and controllers from the Garage Terraform provider:
+This provider uses Upjet to generate CRDs and controllers:
 
 ```bash
 # Generate all code
@@ -228,15 +196,15 @@ This provider is built using:
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
-### Development Setup
+### Areas for Contribution
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run tests: `make test`
-5. Submit a pull request
+- Bug fixes and improvements
+- Additional Garage resources
+- Integration tests
+- Documentation improvements
+- Example compositions
 
 ## License
 
@@ -248,3 +216,16 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 - [Crossplane Documentation](https://docs.crossplane.io/)
 - [Upjet Documentation](https://github.com/crossplane/upjet)
 - [Garage Terraform Provider](https://github.com/deuxfleurs-org/garage-terraform-provider)
+
+## Status
+
+🚧 **Development Status**: Ready for code generation and testing
+
+This implementation provides a complete foundation for a native Garage Crossplane provider. The next steps are:
+
+1. Generate CRDs with `make generate`
+2. Test with a Garage instance
+3. Build and publish container image
+4. Publish Crossplane package
+
+See [IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md) for complete details.
