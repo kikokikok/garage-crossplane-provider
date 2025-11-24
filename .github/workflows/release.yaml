@@ -125,7 +125,8 @@ jobs:
           # verify package exists
           if [ ! -f provider-garage-${{ steps.get_version.outputs.VERSION }}.xpkg ]; then
             echo "ERROR: xpkg not found: provider-garage-${{ steps.get_version.outputs.VERSION }}.xpkg" >&2
-            ls -la
+            echo "Available xpkg files:" >&2
+            ls -la *.xpkg 2>/dev/null || echo "No xpkg files found" >&2
             exit 1
           fi
 
@@ -239,7 +240,8 @@ jobs:
           # verify package exists
           if [ ! -f provider-garage-${VERSION_TAG}.xpkg ]; then
             echo "ERROR: xpkg not found: provider-garage-${VERSION_TAG}.xpkg" >&2
-            ls -la
+            echo "Available xpkg files:" >&2
+            ls -la *.xpkg 2>/dev/null || echo "No xpkg files found" >&2
             exit 1
           fi
           
