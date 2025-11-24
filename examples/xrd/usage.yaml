@@ -1,0 +1,101 @@
+---
+# Example: Using Crossplane v2 GarageBucket XR
+# This creates a namespaced XR (Crossplane v2 pattern)
+apiVersion: storage.example.com/v1alpha1
+kind: GarageBucket
+metadata:
+  name: my-app-storage
+  namespace: my-app  # Namespaced in v2!
+spec:
+  bucketName: my-app-data
+  createAccessKey: true
+  permissions:
+    read: true
+    write: true
+    owner: false
+  # Crossplane v2 pattern for connection secrets
+  crossplane:
+    publishConnectionDetailsTo:
+      name: my-app-s3-creds
+      metadata:
+        labels:
+          app: my-app
+---
+# Example: Direct use of Bucket MR (no XRD)
+apiVersion: garage.crossplane.io/v1alpha1
+kind: Bucket
+metadata:
+  name: direct-bucket
+  namespace: my-app
+spec:
+  forProvider:
+    globalAlias: my-direct-bucket
+  providerConfigRef:
+    name: default
+---
+# Example: Direct use of Key MR
+apiVersion: garage.crossplane.io/v1alpha1
+kind: Key
+metadata:
+  name: direct-key
+  namespace: my-app
+spec:
+  forProvider:
+    name: my-direct-key
+  providerConfigRef:
+    name: default
+  writeConnectionSecretToRef:
+    name: direct-key-creds
+    namespace: my-app
+---
+# Example: Direct use of KeyAccess MR
+apiVersion: garage.crossplane.io/v1alpha1
+kind: KeyAccess
+metadata:
+  name: direct-access
+  namespace: my-app
+spec:
+  forProvider:
+    # Use refs to other resources
+    bucketIdRef:
+      name: direct-bucket
+    accessKeyIdRef:
+      name: direct-key
+    permissions:
+      read: true
+      write: true
+      owner: false
+  providerConfigRef:
+    name: default
+---
+# Example ProviderConfig
+apiVersion: garage.crossplane.io/v1beta1
+kind: ProviderConfig
+metadata:
+  name: default
+spec:
+  credentials:
+    source: Secret
+    secretRef:
+      name: garage-creds
+      namespace: crossplane-system
+      key: credentials
+  # Optional: override endpoint
+  endpoint: http://garage.example.com:3903
+---
+# Example credentials secret
+# kubectl create secret generic garage-creds \
+#   --from-literal=credentials='{"endpoint":"http://garage:3903","adminToken":"YOUR_TOKEN"}' \
+#   -n crossplane-system
+apiVersion: v1
+kind: Secret
+metadata:
+  name: garage-creds
+  namespace: crossplane-system
+type: Opaque
+stringData:
+  credentials: |
+    {
+      "endpoint": "http://garage.example.com:3903",
+      "adminToken": "your-admin-token-here"
+    }
