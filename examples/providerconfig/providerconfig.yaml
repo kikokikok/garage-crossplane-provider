@@ -1,0 +1,29 @@
+---
+# Example ProviderConfig for Garage provider
+# This configures the provider with credentials to access the Garage Admin API
+apiVersion: garage.crossplane.io/v1beta1
+kind: ProviderConfig
+metadata:
+  name: default
+spec:
+  credentials:
+    source: Secret
+    secretRef:
+      namespace: crossplane-system
+      name: garage-credentials
+      key: credentials
+---
+# Example Secret containing Garage credentials
+# Create this secret with your actual Garage endpoint and admin token
+apiVersion: v1
+kind: Secret
+metadata:
+  name: garage-credentials
+  namespace: crossplane-system
+type: Opaque
+stringData:
+  credentials: |
+    {
+      "garage_endpoint": "http://garage.example.com:3903",
+      "garage_admin_token": "your-garage-admin-token-here"
+    }

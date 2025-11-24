@@ -1,0 +1,18 @@
+---
+# Example Garage Bucket resource
+# This creates a namespaced managed resource for a Garage S3 bucket
+apiVersion: bucket.garage.crossplane.io/v1alpha1
+kind: Bucket
+metadata:
+  name: example-bucket
+  namespace: default
+spec:
+  forProvider:
+    # Global alias for the bucket (S3 bucket name)
+    globalAlias: my-example-bucket
+  providerConfigRef:
+    name: default
+  # Connection secret will contain bucket information
+  writeConnectionSecretToRef:
+    name: example-bucket-connection
+    namespace: default
