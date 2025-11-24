@@ -1,0 +1,63 @@
+---
+# Example: Using the v2 GarageBucket XR
+# This demonstrates the user experience with v2 namespaced XRs
+apiVersion: s3.example.com/v1alpha1
+kind: GarageBucket
+metadata:
+  name: my-app-storage
+  namespace: my-app
+spec:
+  # Simple declarative spec
+  bucketName: my-app-data-prod
+  createAccessKey: true
+  permissions:
+    read: true
+    write: true
+    owner: false
+  
+  # v2 pattern: publish connection details to namespace
+  crossplane:
+    publishConnectionDetailsTo:
+      name: my-app-s3-credentials
+      metadata:
+        labels:
+          app: my-app
+---
+# Your application can now use the credentials
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+  namespace: my-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: my-app
+  template:
+    metadata:
+      labels:
+        app: my-app
+    spec:
+      containers:
+      - name: app
+        image: my-app:latest
+        env:
+        # Configure S3 client
+        - name: S3_ENDPOINT
+          value: "http://garage.example.com:3900"
+        - name: S3_BUCKET
+          value: "my-app-data-prod"
+        - name: S3_REGION
+          value: "garage"
+        # Load credentials from the secret created by the XR
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: my-app-s3-credentials
+              key: access_key_id
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: my-app-s3-credentials
+              key: secret_access_key

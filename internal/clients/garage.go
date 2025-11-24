@@ -13,7 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/crossplane/upjet/pkg/config"
+	"github.com/kikokikok/provider-garage/apis/v1beta1"
 )
 
 const (
@@ -50,7 +50,7 @@ func TerraformSetupBuilder(version, providerSource, providerVersion string) terr
 		}
 
 		// Read the ProviderConfig
-		pc := &config.ProviderConfig{}
+		pc := &v1beta1.ProviderConfig{}
 		if err := c.Get(ctx, types.NamespacedName{Name: configRef.Name}, pc); err != nil {
 			return ps, errors.Wrap(err, errGetProviderConfig)
 		}
