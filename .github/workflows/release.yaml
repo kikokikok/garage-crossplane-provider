@@ -121,14 +121,33 @@ jobs:
           up xpkg build \
             --package-root=package \
             --name=provider-garage-${{ steps.get_version.outputs.VERSION }}.xpkg
-          
-          # verify package exists
-          if [ ! -f provider-garage-${{ steps.get_version.outputs.VERSION }}.xpkg ]; then
-            echo "ERROR: xpkg not found: provider-garage-${{ steps.get_version.outputs.VERSION }}.xpkg" >&2
-            echo "Available xpkg files:" >&2
-            ls -la *.xpkg 2>/dev/null || echo "No xpkg files found" >&2
+
+      - name: Verify xpkg and move to repo root
+        run: |
+          set -euo pipefail
+          VERSION="${DOCKER_METADATA_OUTPUT_VERSION:-0.0.0}"
+          XPkg="package/provider-garage-v${VERSION}.xpkg"
+
+          echo "Looking for xpkg at: $XPkg"
+          if [ ! -f "$XPkg" ]; then
+            echo "ERROR: xpkg not found: $XPkg" >&2
+            echo "Working directory: $(pwd)" >&2
+            echo "Listing package/ and repo root for debugging:" >&2
+            ls -la package || true
+            ls -la . || true
             exit 1
           fi
+
+          mv "$XPkg" .
+          echo "Moved $XPkg to $(pwd)/"
+        env:
+          DOCKER_METADATA_OUTPUT_VERSION: ${{ steps.meta.outputs.version }}
+
+      - name: Upload xpkg artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-xpkg
+          path: provider-garage-v${{ steps.meta.outputs.version }}.xpkg
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
