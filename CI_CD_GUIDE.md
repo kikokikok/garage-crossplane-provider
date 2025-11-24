@@ -87,10 +87,12 @@ The release workflow will automatically:
 
 3. **Build and Push Docker Image**
    - Multi-stage build
+   - Multi-architecture support (linux/amd64, linux/arm64)
    - Push to `ghcr.io/kikokikok/provider-garage:v0.1.0`
    - Also tagged as `:latest` for stable releases
 
 4. **Create Crossplane Package**
+   - Uses UP CLI (`up xpkg build`)
    - Package all CRDs and manifests
    - Create `.xpkg` file
    - Include package metadata
@@ -101,6 +103,7 @@ The release workflow will automatically:
    - Generate release notes
 
 6. **Publish to Upbound Marketplace**
+   - Uses UP CLI (`up xpkg push`)
    - Automatic if secrets are configured
    - Published to `xpkg.upbound.io/YOUR_ORG/provider-garage`
 
