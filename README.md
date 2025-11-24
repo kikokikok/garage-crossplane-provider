@@ -1,5 +1,10 @@
 # provider-garage
 
+[![CI](https://github.com/kikokikok/provider-garage/actions/workflows/ci.yaml/badge.svg)](https://github.com/kikokikok/provider-garage/actions/workflows/ci.yaml)
+[![Release](https://github.com/kikokikok/provider-garage/actions/workflows/release.yaml/badge.svg)](https://github.com/kikokikok/provider-garage/actions/workflows/release.yaml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/kikokikok/provider-garage)](https://goreportcard.com/report/github.com/kikokikok/provider-garage)
+[![codecov](https://codecov.io/gh/kikokikok/provider-garage/branch/main/graph/badge.svg)](https://codecov.io/gh/kikokikok/provider-garage)
+
 A native Crossplane provider for [Garage](https://garagehq.deuxfleurs.fr/) v2+ object storage, built from scratch using the native Garage Admin API v2.
 
 ## Features
@@ -7,6 +12,9 @@ A native Crossplane provider for [Garage](https://garagehq.deuxfleurs.fr/) v2+ o
 - **Native Implementation**: Direct integration with Garage Admin API v2 (no Terraform/Upjet)
 - **Crossplane v2 Only**: Supports only Crossplane v2+ with namespaced resources
 - **Garage v2+ Only**: Supports only Garage v2+ Admin API
+- **TDD Approach**: Comprehensive unit and integration tests
+- **CI/CD**: GitHub Actions for continuous integration and deployment
+- **Multi-platform**: Binaries for Linux/Darwin on AMD64/ARM64
 
 ### Supported Resources
 
@@ -117,29 +125,137 @@ spec:
 
 ## Development
 
+### Prerequisites
+
+- Go 1.21+
+- Docker (for building images)
+- Kind (for integration tests)
+- kubectl
+
 ### Build
 
 ```bash
 # Build provider binary
 make build
 
-# Run tests
+# Run unit tests
 make test
+
+# Run integration tests (requires Kind cluster)
+make test-integration
 
 # Format code
 make fmt
+
+# Run linter
+make lint
+
+# Generate code (CRDs, deepcopy)
+make generate
 ```
+
+### Testing
+
+The project follows TDD practices with comprehensive test coverage:
+
+#### Unit Tests
+
+```bash
+# Run all unit tests with coverage
+go test -v -race -coverprofile=coverage.out ./...
+
+# View coverage report
+go tool cover -html=coverage.out
+```
+
+Unit tests are located in `*_test.go` files next to the code they test:
+- `pkg/garage/client_test.go`: Tests for Garage API client
+- `internal/controller/bucket/bucket_test.go`: Tests for bucket controller
+
+#### Integration Tests
+
+Integration tests run against a real Kubernetes cluster (Kind):
+
+```bash
+# Set up Kind cluster
+kind create cluster --name garage-test
+
+# Install Crossplane
+helm repo add crossplane-stable https://charts.crossplane.io/stable
+helm install crossplane crossplane-stable/crossplane \
+  --namespace crossplane-system --create-namespace
+
+# Run integration tests
+make test-integration
+```
+
+### CI/CD
+
+The project uses GitHub Actions for continuous integration and deployment:
+
+#### CI Workflow (`.github/workflows/ci.yaml`)
+
+Runs on every push and pull request:
+- **Lint**: Code quality checks with golangci-lint
+- **Unit Tests**: Run all unit tests with race detection
+- **Build**: Verify binary compilation
+- **Integration Tests**: Run integration tests in Kind cluster
+- **Coverage**: Upload coverage to Codecov
+
+#### Release Workflow (`.github/workflows/release.yaml`)
+
+Triggers on version tags (e.g., `v0.1.0`):
+- Build binaries for multiple platforms (Linux/Darwin, AMD64/ARM64)
+- Generate CRDs
+- Build and push Docker image to GitHub Container Registry
+- Create Crossplane package (`.xpkg`)
+- Create GitHub Release with artifacts
+- Publish to Upbound Marketplace
+
+### Creating a Release
+
+```bash
+# Tag a new version
+git tag -a v0.1.0 -m "Release v0.1.0"
+git push origin v0.1.0
+
+# The release workflow will automatically:
+# 1. Build multi-platform binaries
+# 2. Create Docker image
+# 3. Package Crossplane provider
+# 4. Publish to GitHub Releases
+# 5. Push to Upbound Marketplace (if configured)
+```
+
+### Publishing to Upbound Marketplace
+
+To publish to Upbound Marketplace, configure these secrets in your repository:
+
+- `UPBOUND_TOKEN`: Your Upbound CLI token
+- `UPBOUND_ORG`: Your Upbound organization name
+
+Then the release workflow will automatically publish on tagged releases.
 
 ### Project Structure
 
 ```
 provider-garage/
-├── apis/                    # API type definitions
-│   ├── v1alpha1/           # Managed resource types
-│   └── v1beta1/            # ProviderConfig types
-├── cmd/provider/           # Provider entry point
-├── internal/controller/    # Resource controllers
-├── pkg/garage/             # Garage Admin API client
+├── .github/workflows/      # GitHub Actions CI/CD
+│   ├── ci.yaml            # Continuous integration
+│   └── release.yaml       # Release automation
+├── apis/                   # API type definitions
+│   ├── v1alpha1/          # Managed resource types
+│   └── v1beta1/           # ProviderConfig types
+├── cmd/provider/          # Provider entry point
+├── config/                # Kubernetes manifests
+│   └── crd/bases/        # Generated CRDs
+├── internal/controller/   # Resource controllers
+│   └── bucket/           # Bucket controller with tests
+├── pkg/garage/           # Garage Admin API client
+│   ├── client.go         # API client implementation
+│   └── client_test.go    # Client unit tests
+├── test/integration/     # Integration test suite
+└── Makefile             # Build automation
 └── Makefile               # Build automation
 ```
 
