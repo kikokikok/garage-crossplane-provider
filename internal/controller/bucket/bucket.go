@@ -23,12 +23,12 @@ import (
 )
 
 const (
-	errNotBucket      = "managed resource is not a Bucket custom resource"
-	errTrackPCUsage   = "cannot track ProviderConfig usage"
-	errGetPC          = "cannot get ProviderConfig"
-	errGetCreds       = "cannot get credentials"
-	errCreateBucket   = "cannot create bucket"
-	errDeleteBucket   = "cannot delete bucket"
+	errNotBucket    = "managed resource is not a Bucket custom resource"
+	errTrackPCUsage = "cannot track ProviderConfig usage"
+	errGetPC        = "cannot get ProviderConfig"
+	errGetCreds     = "cannot get credentials"
+	errCreateBucket = "cannot create bucket"
+	errDeleteBucket = "cannot delete bucket"
 )
 
 // Setup adds a controller that reconciles Bucket managed resources.

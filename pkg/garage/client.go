@@ -70,11 +70,11 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body interf
 
 // Bucket represents a Garage bucket
 type Bucket struct {
-	ID           string            `json:"id"`
-	GlobalAliases []string         `json:"globalAliases"`
-	LocalAliases map[string]string `json:"localAliases,omitempty"`
-	Keys         []BucketKeyPerm   `json:"keys,omitempty"`
-	Quotas       *BucketQuotas     `json:"quotas,omitempty"`
+	ID            string            `json:"id"`
+	GlobalAliases []string          `json:"globalAliases"`
+	LocalAliases  map[string]string `json:"localAliases,omitempty"`
+	Keys          []BucketKeyPerm   `json:"keys,omitempty"`
+	Quotas        *BucketQuotas     `json:"quotas,omitempty"`
 }
 
 // BucketKeyPerm represents permissions for a key on a bucket
@@ -169,9 +169,9 @@ type KeyPermissions struct {
 
 // KeyBucketPerms represents permissions for a key on buckets
 type KeyBucketPerms struct {
-	ID          string `json:"id"`
+	ID            string   `json:"id"`
 	GlobalAliases []string `json:"globalAliases"`
-	Permissions struct {
+	Permissions   struct {
 		Read  bool `json:"read"`
 		Write bool `json:"write"`
 		Owner bool `json:"owner"`

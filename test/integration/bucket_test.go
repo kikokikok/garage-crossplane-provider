@@ -79,7 +79,7 @@ var _ = Describe("Bucket Controller", func() {
 	Context("When creating a Bucket", func() {
 		It("Should create the Bucket resource successfully", func() {
 			ctx := context.Background()
-			
+
 			// Create a namespace for testing
 			ns := &corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
@@ -136,7 +136,7 @@ var _ = Describe("Bucket Controller", func() {
 				},
 			}
 			bucket.Spec.ProviderConfigReference = &xpv1.Reference{Name: "test-provider-config"}
-			
+
 			Expect(k8sClient.Create(ctx, bucket)).Should(Succeed())
 
 			// Verify bucket was created

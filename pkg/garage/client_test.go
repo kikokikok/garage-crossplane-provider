@@ -66,7 +66,7 @@ func TestCreateBucket(t *testing.T) {
 				if r.URL.Path != "/v1/bucket" {
 					t.Errorf("Expected path '/v1/bucket', got '%s'", r.URL.Path)
 				}
-				
+
 				// Verify authorization header
 				authHeader := r.Header.Get("Authorization")
 				if authHeader != "Bearer test-token" {
@@ -86,7 +86,7 @@ func TestCreateBucket(t *testing.T) {
 			}
 
 			bucket, err := client.CreateBucket(context.Background(), req)
-			
+
 			if tt.expectError {
 				if err == nil {
 					t.Error("Expected error, got nil")
@@ -138,7 +138,7 @@ func TestGetBucket(t *testing.T) {
 				if r.Method != "GET" {
 					t.Errorf("Expected GET request, got %s", r.Method)
 				}
-				
+
 				expectedPath := "/v1/bucket"
 				if r.URL.Path != expectedPath {
 					t.Errorf("Expected path '%s', got '%s'", expectedPath, r.URL.Path)
@@ -238,7 +238,7 @@ func TestCreateKey(t *testing.T) {
 
 	client := NewClient(server.URL, "test-token")
 	req := &CreateKeyRequest{Name: "test-key"}
-	
+
 	key, err := client.CreateKey(context.Background(), req)
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
