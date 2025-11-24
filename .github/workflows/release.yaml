@@ -120,8 +120,14 @@ jobs:
           # Build the package using UP CLI
           up xpkg build \
             --package-root=package \
-            --name=provider-garage-${{ steps.get_version.outputs.VERSION }}.xpkg \
-            --output=.
+            --name=provider-garage-${{ steps.get_version.outputs.VERSION }}.xpkg
+          
+          # verify package exists
+          if [ ! -f provider-garage-${{ steps.get_version.outputs.VERSION }}.xpkg ]; then
+            echo "ERROR: xpkg not found: provider-garage-${{ steps.get_version.outputs.VERSION }}.xpkg" >&2
+            ls -la
+            exit 1
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
@@ -228,8 +234,14 @@ jobs:
           # Build the package
           up xpkg build \
             --package-root=package \
-            --name=provider-garage-${VERSION_TAG}.xpkg \
-            --output=.
+            --name=provider-garage-${VERSION_TAG}.xpkg
+          
+          # verify package exists
+          if [ ! -f provider-garage-${VERSION_TAG}.xpkg ]; then
+            echo "ERROR: xpkg not found: provider-garage-${VERSION_TAG}.xpkg" >&2
+            ls -la
+            exit 1
+          fi
           
           # Push with version tag
           up xpkg push ${UPBOUND_REPO}:${VERSION_TAG} \
