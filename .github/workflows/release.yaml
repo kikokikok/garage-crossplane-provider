@@ -102,8 +102,14 @@ jobs:
       - name: Install UP CLI
         run: |
           curl -sL https://cli.upbound.io | sh
-          sudo mv up /usr/local/bin/
-          sudo chmod +x /usr/local/bin/up
+          if [ -f up ]; then
+            sudo mv up /usr/local/bin/
+            sudo chmod +x /usr/local/bin/up
+          else
+            echo "ERROR: UP CLI binary not found after install" >&2
+            ls -la
+            exit 1
+          fi
 
       - name: Create Crossplane package
         run: |
