@@ -107,10 +107,10 @@ jobs:
           # Move whichever binary was downloaded
           if [ -f kubectl-crossplane ]; then
             sudo mv kubectl-crossplane /usr/local/bin/
-            chmod +x /usr/local/bin/kubectl-crossplane
+            sudo chmod +x /usr/local/bin/kubectl-crossplane
           elif [ -f crossplane ]; then
             sudo mv crossplane /usr/local/bin/
-            chmod +x /usr/local/bin/crossplane
+            sudo chmod +x /usr/local/bin/crossplane
           else
             echo "ERROR: crossplane CLI binary not found after install" >&2
             ls -la
