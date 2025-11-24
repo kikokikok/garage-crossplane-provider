@@ -251,18 +251,28 @@ jobs:
           UPBOUND_REPO: xpkg.upbound.io/${{ secrets.UPBOUND_ORG }}/provider-garage
           VERSION_TAG: ${{ steps.get_version.outputs.VERSION }}
         run: |
+          set -euo pipefail
+          
           # Build the package
           up xpkg build \
             --package-root=package \
             --name=provider-garage-${VERSION_TAG}.xpkg
           
-          # verify package exists
-          if [ ! -f provider-garage-${VERSION_TAG}.xpkg ]; then
-            echo "ERROR: xpkg not found: provider-garage-${VERSION_TAG}.xpkg" >&2
-            echo "Available xpkg files:" >&2
-            ls -la *.xpkg 2>/dev/null || echo "No xpkg files found" >&2
+          # Verify package exists in package/ directory and move to repo root
+          XPkg="package/provider-garage-${VERSION_TAG}.xpkg"
+          echo "Looking for xpkg at: $XPkg"
+          
+          if [ ! -f "$XPkg" ]; then
+            echo "ERROR: xpkg not found: $XPkg" >&2
+            echo "Working directory: $(pwd)" >&2
+            echo "Listing package/ and repo root for debugging:" >&2
+            ls -la package || true
+            ls -la . || true
             exit 1
           fi
+          
+          mv "$XPkg" .
+          echo "Moved $XPkg to $(pwd)/"
           
           # Push with version tag
           up xpkg push ${UPBOUND_REPO}:${VERSION_TAG} \
