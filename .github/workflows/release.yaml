@@ -103,12 +103,33 @@ jobs:
         run: |
           # Install crossplane CLI
           curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
-          sudo mv kubectl-crossplane /usr/local/bin/
-          
-          # Build crossplane package
-          kubectl crossplane build provider \
-            --package-root=package \
-            --package-file=provider-garage-${{ steps.get_version.outputs.VERSION }}.xpkg
+
+          # Move whichever binary was downloaded
+          if [ -f kubectl-crossplane ]; then
+            sudo mv kubectl-crossplane /usr/local/bin/
+            chmod +x /usr/local/bin/kubectl-crossplane
+          elif [ -f crossplane ]; then
+            sudo mv crossplane /usr/local/bin/
+            chmod +x /usr/local/bin/crossplane
+          else
+            echo "ERROR: crossplane CLI binary not found after install" >&2
+            ls -la
+            exit 1
+          fi
+
+          # Build crossplane package using available command
+          if command -v kubectl-crossplane >/dev/null 2>&1; then
+            kubectl crossplane build provider \
+              --package-root=package \
+              --package-file=provider-garage-${{ steps.get_version.outputs.VERSION }}.xpkg
+          elif command -v crossplane >/dev/null 2>&1; then
+            crossplane build provider \
+              --package-root=package \
+              --package-file=provider-garage-${{ steps.get_version.outputs.VERSION }}.xpkg
+          else
+            echo "ERROR: neither 'kubectl-crossplane' nor 'crossplane' binary is available" >&2
+            exit 1
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
