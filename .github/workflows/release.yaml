@@ -99,37 +99,24 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           file: Dockerfile
 
-      - name: Create Crossplane package
+      - name: Install UP CLI
         run: |
-          # Install crossplane CLI
-          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
-
-          # Move whichever binary was downloaded
-          if [ -f kubectl-crossplane ]; then
-            sudo mv kubectl-crossplane /usr/local/bin/
-            sudo chmod +x /usr/local/bin/kubectl-crossplane
-          elif [ -f crossplane ]; then
-            sudo mv crossplane /usr/local/bin/
-            sudo chmod +x /usr/local/bin/crossplane
+          curl -sL https://cli.upbound.io | sh
+          if [ -f up ]; then
+            sudo mv up /usr/local/bin/
+            sudo chmod +x /usr/local/bin/up
           else
-            echo "ERROR: crossplane CLI binary not found after install" >&2
+            echo "ERROR: UP CLI binary not found after install" >&2
             ls -la
             exit 1
           fi
 
-          # Build crossplane package using available command
-          if command -v kubectl-crossplane >/dev/null 2>&1; then
-            kubectl crossplane build provider \
-              --package-root=package \
-              --package-file=provider-garage-${{ steps.get_version.outputs.VERSION }}.xpkg
-          elif command -v crossplane >/dev/null 2>&1; then
-            crossplane build provider \
-              --package-root=package \
-              --package-file=provider-garage-${{ steps.get_version.outputs.VERSION }}.xpkg
-          else
-            echo "ERROR: neither 'kubectl-crossplane' nor 'crossplane' binary is available" >&2
-            exit 1
-          fi
+      - name: Create Crossplane package
+        run: |
+          # Build the package using UP CLI
+          up xpkg build \
+            --package-root=package \
+            --name=provider-garage-${{ steps.get_version.outputs.VERSION }}.xpkg
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
@@ -224,13 +211,20 @@ jobs:
 
       - name: Build and push to Upbound
         env:
-          IMAGE_PATH: xpkg.upbound.io/${{ secrets.UPBOUND_ORG }}/provider-garage
+          UPBOUND_REPO: xpkg.upbound.io/${{ secrets.UPBOUND_ORG }}/provider-garage
           VERSION_TAG: ${{ steps.get_version.outputs.VERSION }}
         run: |
-          up project build --repository "${IMAGE_PATH}"
-          up project push --repository "${IMAGE_PATH}" --tag="${VERSION_TAG}"
+          # Build the package
+          up xpkg build \
+            --package-root=package \
+            --name=provider-garage-${VERSION_TAG}.xpkg
+          
+          # Push with version tag
+          up xpkg push ${UPBOUND_REPO}:${VERSION_TAG} \
+            -f provider-garage-${VERSION_TAG}.xpkg
           
           # Also push as latest if this is not a pre-release
           if [[ ! "${VERSION_TAG}" =~ (alpha|beta|rc) ]]; then
-            up project push --repository "${IMAGE_PATH}" --tag="latest"
+            up xpkg push ${UPBOUND_REPO}:latest \
+              -f provider-garage-${VERSION_TAG}.xpkg
           fi
