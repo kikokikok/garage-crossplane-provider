@@ -1,0 +1,206 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Get version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Build binary
+        run: |
+          make build
+          mv bin/provider bin/provider-garage-linux-amd64
+          
+      - name: Build binary for other platforms
+        run: |
+          # Build for multiple platforms
+          GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -o bin/provider-garage-darwin-amd64 cmd/provider/main.go
+          GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -o bin/provider-garage-darwin-arm64 cmd/provider/main.go
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o bin/provider-garage-linux-arm64 cmd/provider/main.go
+
+      - name: Generate CRDs
+        run: |
+          mkdir -p package/crds
+          go run sigs.k8s.io/controller-tools/cmd/controller-gen \
+            crd:crdVersions=v1 \
+            paths="./apis/..." \
+            output:crd:artifacts:config=package/crds
+
+      - name: Create Crossplane package metadata
+        run: |
+          cat > package/crossplane.yaml << EOF
+          apiVersion: meta.pkg.crossplane.io/v1alpha1
+          kind: Provider
+          metadata:
+            name: provider-garage
+            annotations:
+              meta.crossplane.io/maintainer: kikokikok
+              meta.crossplane.io/source: github.com/kikokikok/provider-garage
+              meta.crossplane.io/license: Apache-2.0
+              meta.crossplane.io/description: Native Crossplane provider for Garage v2+ object storage
+              meta.crossplane.io/readme: |
+                A native Crossplane provider for Garage v2+ using Admin API v2.
+                Supports only Crossplane v2+ with namespaced resources.
+          spec:
+            controller:
+              image: ${REGISTRY}/${IMAGE_NAME}:${{ steps.get_version.outputs.VERSION }}
+          EOF
+
+      - name: Log in to Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          file: Dockerfile
+
+      - name: Create Crossplane package
+        run: |
+          # Install crossplane CLI
+          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
+          sudo mv kubectl-crossplane /usr/local/bin/
+          
+          # Build crossplane package
+          kubectl crossplane build provider \
+            --package-root=package \
+            --package-file=provider-garage-${{ steps.get_version.outputs.VERSION }}.xpkg
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            bin/provider-garage-*
+            provider-garage-${{ steps.get_version.outputs.VERSION }}.xpkg
+          body: |
+            ## Release ${{ steps.get_version.outputs.VERSION }}
+            
+            ### Installation
+            
+            ```bash
+            kubectl crossplane install provider ghcr.io/${{ github.repository }}:${{ steps.get_version.outputs.VERSION }}
+            ```
+            
+            ### Binaries
+            - Linux AMD64: `provider-garage-linux-amd64`
+            - Linux ARM64: `provider-garage-linux-arm64`
+            - Darwin AMD64: `provider-garage-darwin-amd64`
+            - Darwin ARM64: `provider-garage-darwin-arm64`
+            
+            ### Crossplane Package
+            - Crossplane package: `provider-garage-${{ steps.get_version.outputs.VERSION }}.xpkg`
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-upbound:
+    name: Publish to Upbound Marketplace
+    runs-on: ubuntu-latest
+    needs: build-and-release
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Get version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Generate CRDs
+        run: |
+          mkdir -p package/crds
+          go run sigs.k8s.io/controller-tools/cmd/controller-gen \
+            crd:crdVersions=v1 \
+            paths="./apis/..." \
+            output:crd:artifacts:config=package/crds
+
+      - name: Create Crossplane package metadata for Upbound
+        run: |
+          cat > package/crossplane.yaml << EOF
+          apiVersion: meta.pkg.crossplane.io/v1alpha1
+          kind: Provider
+          metadata:
+            name: provider-garage
+            annotations:
+              meta.crossplane.io/maintainer: kikokikok
+              meta.crossplane.io/source: github.com/kikokikok/provider-garage
+              meta.crossplane.io/license: Apache-2.0
+              meta.crossplane.io/description: Native Crossplane provider for Garage v2+ object storage
+          spec:
+            controller:
+              image: ${REGISTRY}/${IMAGE_NAME}:${{ steps.get_version.outputs.VERSION }}
+          EOF
+
+      - name: Install UP CLI
+        run: |
+          curl -sL https://cli.upbound.io | sh
+          sudo mv up /usr/local/bin/
+
+      - name: Login to Upbound
+        env:
+          UP_TOKEN: ${{ secrets.UPBOUND_TOKEN }}
+        run: |
+          echo "${UP_TOKEN}" | up login --token-stdin
+
+      - name: Build and push to Upbound
+        env:
+          IMAGE_PATH: xpkg.upbound.io/${{ secrets.UPBOUND_ORG }}/provider-garage
+          VERSION_TAG: ${{ steps.get_version.outputs.VERSION }}
+        run: |
+          up project build --repository "${IMAGE_PATH}"
+          up project push --repository "${IMAGE_PATH}" --tag="${VERSION_TAG}"
+          
+          # Also push as latest if this is not a pre-release
+          if [[ ! "${VERSION_TAG}" =~ (alpha|beta|rc) ]]; then
+            up project push --repository "${IMAGE_PATH}" --tag="latest"
+          fi

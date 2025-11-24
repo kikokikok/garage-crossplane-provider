@@ -1,0 +1,135 @@
+---
+# Crossplane v2 XRD for GarageBucket
+# Uses apiextensions.crossplane.io/v2 API (v2 only, no v1 support)
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: garagebuckets.storage.example.com
+spec:
+  # Namespaced scope for Crossplane v2
+  scope: Namespaced
+  group: storage.example.com
+  names:
+    kind: GarageBucket
+    plural: garagebuckets
+  versions:
+  - name: v1alpha1
+    served: true
+    referenceable: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            properties:
+              # Bucket configuration
+              bucketName:
+                type: string
+                description: Name of the S3 bucket (global alias)
+              # Whether to create an access key
+              createAccessKey:
+                type: boolean
+                default: true
+                description: Create an access key with full permissions
+              # Key permissions
+              permissions:
+                type: object
+                properties:
+                  read:
+                    type: boolean
+                    default: true
+                  write:
+                    type: boolean
+                    default: true
+                  owner:
+                    type: boolean
+                    default: false
+            required:
+            - bucketName
+          status:
+            type: object
+            properties:
+              bucketID:
+                type: string
+                description: Internal bucket ID
+              accessKeyID:
+                type: string
+                description: Access key ID if created
+---
+# Crossplane v2 Composition using Function Pipeline
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: garagebuckets.storage.example.com
+  labels:
+    provider: garage
+    crossplane.io/xrd: garagebuckets.storage.example.com
+spec:
+  compositeTypeRef:
+    apiVersion: storage.example.com/v1alpha1
+    kind: GarageBucket
+  
+  # Use Pipeline mode (Crossplane v2 pattern)
+  mode: Pipeline
+  
+  pipeline:
+  - step: render-resources
+    functionRef:
+      name: function-go-templating
+    input:
+      apiVersion: gotemplating.fn.crossplane.io/v1beta1
+      kind: GoTemplate
+      source: Inline
+      inline:
+        template: |
+          ---
+          # Create Garage Bucket (namespaced!)
+          apiVersion: garage.crossplane.io/v1alpha1
+          kind: Bucket
+          metadata:
+            name: {{ .observed.composite.resource.spec.bucketName }}
+            annotations:
+              crossplane.io/external-name: {{ .observed.composite.resource.spec.bucketName }}
+          spec:
+            forProvider:
+              globalAlias: {{ .observed.composite.resource.spec.bucketName }}
+            providerConfigRef:
+              name: default
+          {{- if .observed.composite.resource.spec.createAccessKey }}
+          ---
+          # Create Access Key (namespaced!)
+          apiVersion: garage.crossplane.io/v1alpha1
+          kind: Key
+          metadata:
+            name: {{ .observed.composite.resource.spec.bucketName }}-key
+          spec:
+            forProvider:
+              name: {{ .observed.composite.resource.spec.bucketName }}-key
+            providerConfigRef:
+              name: default
+            writeConnectionSecretToRef:
+              name: {{ .observed.composite.resource.metadata.name }}-credentials
+          ---
+          # Grant Key Access (namespaced!)
+          apiVersion: garage.crossplane.io/v1alpha1
+          kind: KeyAccess
+          metadata:
+            name: {{ .observed.composite.resource.spec.bucketName }}-access
+          spec:
+            forProvider:
+              bucketIdRef:
+                name: {{ .observed.composite.resource.spec.bucketName }}
+              accessKeyIdRef:
+                name: {{ .observed.composite.resource.spec.bucketName }}-key
+              permissions:
+                read: {{ default true .observed.composite.resource.spec.permissions.read }}
+                write: {{ default true .observed.composite.resource.spec.permissions.write }}
+                owner: {{ default false .observed.composite.resource.spec.permissions.owner }}
+            providerConfigRef:
+              name: default
+          {{- end }}
+  
+  - step: auto-ready
+    functionRef:
+      name: function-auto-ready
