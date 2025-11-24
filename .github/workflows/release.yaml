@@ -52,25 +52,11 @@ jobs:
             paths="./apis/..." \
             output:crd:artifacts:config=package/crds
 
-      - name: Create Crossplane package metadata
+      - name: Update Crossplane package metadata image
         run: |
-          cat > package/crossplane.yaml << EOF
-          apiVersion: meta.pkg.crossplane.io/v1alpha1
-          kind: Provider
-          metadata:
-            name: provider-garage
-            annotations:
-              meta.crossplane.io/maintainer: kikokikok
-              meta.crossplane.io/source: github.com/kikokikok/provider-garage
-              meta.crossplane.io/license: Apache-2.0
-              meta.crossplane.io/description: Native Crossplane provider for Garage v2+ object storage
-              meta.crossplane.io/readme: |
-                A native Crossplane provider for Garage v2+ using Admin API v2.
-                Supports only Crossplane v2+ with namespaced resources.
-          spec:
-            controller:
-              image: ${REGISTRY}/${IMAGE_NAME}:${{ steps.get_version.outputs.VERSION }}
-          EOF
+          # Update the image reference in the existing crossplane.yaml using sed
+          # Pattern matches the full image URL to avoid unintended replacements
+          sed -i "s|image: ghcr.io/kikokikok/garage-crossplane-provider:.*|image: ${REGISTRY}/${IMAGE_NAME}:${{ steps.get_version.outputs.VERSION }}|" package/crossplane.yaml
 
       - name: Log in to Container registry
         uses: docker/login-action@v3
@@ -203,22 +189,11 @@ jobs:
             paths="./apis/..." \
             output:crd:artifacts:config=package/crds
 
-      - name: Create Crossplane package metadata for Upbound
+      - name: Update Crossplane package metadata image for Upbound
         run: |
-          cat > package/crossplane.yaml << EOF
-          apiVersion: meta.pkg.crossplane.io/v1alpha1
-          kind: Provider
-          metadata:
-            name: provider-garage
-            annotations:
-              meta.crossplane.io/maintainer: kikokikok
-              meta.crossplane.io/source: github.com/kikokikok/provider-garage
-              meta.crossplane.io/license: Apache-2.0
-              meta.crossplane.io/description: Native Crossplane provider for Garage v2+ object storage
-          spec:
-            controller:
-              image: ${REGISTRY}/${IMAGE_NAME}:${{ steps.get_version.outputs.VERSION }}
-          EOF
+          # Update the image reference in the existing crossplane.yaml using sed
+          # Pattern matches the full image URL to avoid unintended replacements
+          sed -i "s|image: ghcr.io/kikokikok/garage-crossplane-provider:.*|image: ${REGISTRY}/${IMAGE_NAME}:${{ steps.get_version.outputs.VERSION }}|" package/crossplane.yaml
 
       - name: Install UP CLI
         run: |

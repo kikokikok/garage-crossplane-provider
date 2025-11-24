@@ -24,4 +24,6 @@ COPY --from=builder /workspace/provider /usr/local/bin/provider
 
 USER 65532:65532
 
-ENTRYPOINT ["/usr/local/bin/provider"]
+# Use CMD instead of ENTRYPOINT to ensure compatibility with Crossplane
+# Crossplane may override ENTRYPOINT but typically preserves CMD
+CMD ["/usr/local/bin/provider"]

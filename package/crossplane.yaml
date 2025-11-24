@@ -1,0 +1,30 @@
+apiVersion: meta.pkg.crossplane.io/v1alpha1
+kind: Provider
+metadata:
+  name: provider-garage
+  annotations:
+    meta.crossplane.io/maintainer: kikokikok
+    meta.crossplane.io/source: github.com/kikokikok/garage-crossplane-provider
+    meta.crossplane.io/license: Apache-2.0
+    meta.crossplane.io/description: |
+      Native Crossplane provider for Garage v2+ object storage.
+      Built using native Garage Admin API v2, supports only Crossplane v2+ with namespaced resources.
+    meta.crossplane.io/readme: |
+      # provider-garage
+      
+      A native Crossplane provider for Garage v2+ using Admin API v2.
+      
+      ## Features
+      - Native implementation (no Terraform/Upjet)
+      - Supports only Crossplane v2+ with namespaced resources
+      - Supports only Garage v2+ Admin API
+      
+      ## Installation
+      ```bash
+      kubectl crossplane install provider ghcr.io/kikokikok/garage-crossplane-provider:latest
+      ```
+      
+      See https://github.com/kikokikok/garage-crossplane-provider for full documentation.
+spec:
+  controller:
+    image: ghcr.io/kikokikok/garage-crossplane-provider:latest

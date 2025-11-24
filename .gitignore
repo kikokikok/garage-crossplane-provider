@@ -37,5 +37,6 @@ _output/
 .cache/
 
 # Crossplane
-package/
+package/crds/
+package/*.xpkg
 .registry/
