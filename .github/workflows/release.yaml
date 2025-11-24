@@ -120,7 +120,8 @@ jobs:
           # Build the package using UP CLI
           up xpkg build \
             --package-root=package \
-            --name=provider-garage-${{ steps.get_version.outputs.VERSION }}.xpkg
+            --name=provider-garage-${{ steps.get_version.outputs.VERSION }}.xpkg \
+            --output=.
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
@@ -227,7 +228,8 @@ jobs:
           # Build the package
           up xpkg build \
             --package-root=package \
-            --name=provider-garage-${VERSION_TAG}.xpkg
+            --name=provider-garage-${VERSION_TAG}.xpkg \
+            --output=.
           
           # Push with version tag
           up xpkg push ${UPBOUND_REPO}:${VERSION_TAG} \
