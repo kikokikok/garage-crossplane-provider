@@ -24,6 +24,7 @@ COPY --from=builder /workspace/provider /usr/local/bin/provider
 
 USER 65532:65532
 
-# Use CMD instead of ENTRYPOINT to ensure compatibility with Crossplane
-# Crossplane may override ENTRYPOINT but typically preserves CMD
-CMD ["/usr/local/bin/provider"]
+# Use ENTRYPOINT to ensure container always has a command
+# This is required for Crossplane provider installation via Provider CRD
+# as Crossplane may set empty command/args arrays in the pod spec
+ENTRYPOINT ["/usr/local/bin/provider"]

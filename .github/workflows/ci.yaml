@@ -131,22 +131,351 @@ jobs:
             deployment/crossplane -n crossplane-system
           kubectl get pods -n crossplane-system
 
-      - name: Build and load provider image
+      - name: Build provider image and create xpkg
         run: |
-          make docker-build IMG=provider-garage:test
-          kind load docker-image provider-garage:test --name test-cluster
+          # Build the Docker image
+          make docker-build IMG=ghcr.io/kikokikok/garage-crossplane-provider:test
+          
+          # Load the image into kind
+          kind load docker-image ghcr.io/kikokikok/garage-crossplane-provider:test --name test-cluster
 
-      - name: Generate and apply CRDs
+      - name: Install provider using Crossplane Provider CRD
         run: |
-          go run sigs.k8s.io/controller-tools/cmd/controller-gen \
-            crd:crdVersions=v1 \
-            rbac:roleName=manager-role \
-            webhook \
-            paths="./..." \
-            output:crd:artifacts:config=config/crd/bases
-          kubectl apply -f config/crd/bases/
+          set -euo pipefail
+          
+          # Create the Provider CR - this is how users install providers in Crossplane
+          cat <<EOF | kubectl apply -f -
+          apiVersion: pkg.crossplane.io/v1
+          kind: Provider
+          metadata:
+            name: provider-garage
+          spec:
+            package: ghcr.io/kikokikok/garage-crossplane-provider:test
+            controllerConfigRef:
+              name: provider-garage-config
+          EOF
+          
+          # Create ControllerConfig to use local image
+          cat <<EOF | kubectl apply -f -
+          apiVersion: pkg.crossplane.io/v1alpha1
+          kind: ControllerConfig
+          metadata:
+            name: provider-garage-config
+          spec:
+            image: ghcr.io/kikokikok/garage-crossplane-provider:test
+            args: []
+          EOF
+          
+          echo "Provider CRD applied. Waiting for provider to be installed..."
 
-      - name: Run integration tests
+      - name: Wait for provider pod to be running
         run: |
-          echo "Integration tests will be implemented here"
-          # go test -v -tags=integration ./test/integration/...
+          set -euo pipefail
+          
+          echo "Waiting for provider pod to be created and running..."
+          
+          # Wait for the provider revision to be created (timeout after 30 attempts)
+          REVISION_FOUND=false
+          for i in $(seq 1 30); do
+            REVISION=$(kubectl get providerrevision -o name 2>/dev/null | head -1 || echo "")
+            if [ -n "$REVISION" ]; then
+              echo "Provider revision found: $REVISION"
+              REVISION_FOUND=true
+              break
+            fi
+            echo "Attempt $i: Waiting for provider revision..."
+            sleep 5
+          done
+          
+          if [ "$REVISION_FOUND" = "false" ]; then
+            echo "ERROR: Provider revision was not created after 150 seconds"
+            kubectl get providers -o yaml
+            exit 1
+          fi
+          
+          # Wait for provider pod to be running
+          for i in $(seq 1 60); do
+            POD_STATUS=$(kubectl get pods -n crossplane-system -l pkg.crossplane.io/provider=provider-garage -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "NotFound")
+            # Safely get container status with fallback for when containerStatuses array is empty
+            CONTAINER_STATUS=$(kubectl get pods -n crossplane-system -l pkg.crossplane.io/provider=provider-garage -o jsonpath='{.items[0].status.containerStatuses[0].state}' 2>/dev/null || echo "{}")
+            
+            echo "Attempt $i: Pod status=$POD_STATUS"
+            
+            if [ "$POD_STATUS" = "Running" ]; then
+              echo ""
+              echo "=========================================="
+              echo "SUCCESS: Provider pod is RUNNING!"
+              echo "=========================================="
+              echo ""
+              echo "=== Pod details ==="
+              kubectl get pods -n crossplane-system -l pkg.crossplane.io/provider=provider-garage -o wide
+              echo ""
+              echo "=== Pod describe ==="
+              kubectl describe pod -n crossplane-system -l pkg.crossplane.io/provider=provider-garage
+              echo ""
+              echo "=== Provider logs (last 50 lines) ==="
+              kubectl logs -n crossplane-system -l pkg.crossplane.io/provider=provider-garage --tail=50
+              echo ""
+              echo "=== Provider CR status ==="
+              kubectl get provider provider-garage -o yaml
+              exit 0
+            fi
+            
+            # Check for container errors
+            if echo "$CONTAINER_STATUS" | grep -q "waiting"; then
+              REASON=$(kubectl get pods -n crossplane-system -l pkg.crossplane.io/provider=provider-garage -o jsonpath='{.items[0].status.containerStatuses[0].state.waiting.reason}' 2>/dev/null || echo "Unknown")
+              echo "  Container waiting reason: $REASON"
+              
+              if [ "$REASON" = "CrashLoopBackOff" ] || [ "$REASON" = "Error" ]; then
+                echo ""
+                echo "=========================================="
+                echo "FAILURE: Container failed to start!"
+                echo "=========================================="
+                echo ""
+                echo "=== Pod events ==="
+                kubectl get events -n crossplane-system --field-selector involvedObject.kind=Pod --sort-by='.lastTimestamp' | tail -20
+                echo ""
+                echo "=== Pod describe ==="
+                kubectl describe pod -n crossplane-system -l pkg.crossplane.io/provider=provider-garage
+                echo ""
+                echo "=== Container logs ==="
+                kubectl logs -n crossplane-system -l pkg.crossplane.io/provider=provider-garage --previous 2>/dev/null || \
+                kubectl logs -n crossplane-system -l pkg.crossplane.io/provider=provider-garage 2>/dev/null || \
+                echo "No logs available"
+                exit 1
+              fi
+            fi
+            
+            sleep 5
+          done
+          
+          echo ""
+          echo "=========================================="
+          echo "TIMEOUT: Provider pod did not become ready"
+          echo "=========================================="
+          echo ""
+          echo "=== All pods in crossplane-system ==="
+          kubectl get pods -n crossplane-system -o wide
+          echo ""
+          echo "=== Provider status ==="
+          kubectl get provider provider-garage -o yaml
+          echo ""
+          echo "=== Events ==="
+          kubectl get events -n crossplane-system --sort-by='.lastTimestamp' | tail -30
+          exit 1
+
+      - name: Deploy Garage v2.1.0 for integration testing
+        run: |
+          set -euo pipefail
+          
+          # Create namespace for Garage
+          kubectl create namespace garage-system
+
+          # Generate a random RPC secret
+          export RPC_SECRET=$(openssl rand -hex 32)
+
+          # Create Garage configuration
+          cat <<CONFIGMAP_END | envsubst | kubectl apply -f -
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: garage-config
+            namespace: garage-system
+          data:
+            garage.toml: |
+              metadata_dir = "/data/meta"
+              data_dir = "/data/data"
+              db_engine = "sqlite"
+              replication_factor = 1
+              
+              [rpc]
+              bind_addr = "[::]:3901"
+              secret = "${RPC_SECRET}"
+              
+              [s3_api]
+              s3_region = "garage"
+              api_bind_addr = "[::]:3900"
+              root_domain = ".s3.garage.localhost"
+              
+              [s3_web]
+              bind_addr = "[::]:3902"
+              root_domain = ".web.garage.localhost"
+              
+              [admin]
+              api_bind_addr = "[::]:3903"
+              admin_token = "test-admin-token"
+          CONFIGMAP_END
+
+          # Deploy Garage v2.1.0 StatefulSet
+          cat <<EOF | kubectl apply -f -
+          apiVersion: apps/v1
+          kind: StatefulSet
+          metadata:
+            name: garage
+            namespace: garage-system
+          spec:
+            serviceName: garage
+            replicas: 1
+            selector:
+              matchLabels:
+                app: garage
+            template:
+              metadata:
+                labels:
+                  app: garage
+              spec:
+                containers:
+                - name: garage
+                  image: dxflrs/garage:v2.1.0
+                  ports:
+                  - containerPort: 3900
+                    name: s3
+                  - containerPort: 3901
+                    name: rpc
+                  - containerPort: 3902
+                    name: web
+                  - containerPort: 3903
+                    name: admin
+                  volumeMounts:
+                  - name: config
+                    mountPath: /etc/garage.toml
+                    subPath: garage.toml
+                  - name: data
+                    mountPath: /data
+                volumes:
+                - name: config
+                  configMap:
+                    name: garage-config
+                - name: data
+                  emptyDir: {}
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: garage
+            namespace: garage-system
+          spec:
+            selector:
+              app: garage
+            ports:
+            - name: s3
+              port: 3900
+              targetPort: 3900
+            - name: rpc
+              port: 3901
+              targetPort: 3901
+            - name: web
+              port: 3902
+              targetPort: 3902
+            - name: admin
+              port: 3903
+              targetPort: 3903
+          EOF
+
+          # Wait for Garage to be ready (180s timeout for v2.1.0 which may pull a larger image)
+          kubectl rollout status statefulset/garage -n garage-system --timeout=180s
+
+          # Configure Garage cluster layout
+          echo "Configuring Garage cluster layout..."
+          sleep 5
+          NODE_ID_RAW=$(kubectl exec -n garage-system garage-0 -- /garage node id -q 2>&1)
+          if [ $? -ne 0 ]; then
+            echo "ERROR: Failed to execute garage node id command" >&2
+            echo "$NODE_ID_RAW"
+            kubectl logs -n garage-system garage-0 --tail=50
+            exit 1
+          fi
+          NODE_ID=$(echo "$NODE_ID_RAW" | cut -d@ -f1)
+          if [ -z "$NODE_ID" ]; then
+            echo "ERROR: Failed to get Garage node ID" >&2
+            kubectl logs -n garage-system garage-0 --tail=50
+            exit 1
+          fi
+          echo "Garage node ID: $NODE_ID"
+          kubectl exec -n garage-system garage-0 -- /garage layout assign -z dc1 -c 1G "$NODE_ID"
+          kubectl exec -n garage-system garage-0 -- /garage layout apply --version 1
+          echo "Garage v2.1.0 is ready!"
+
+      - name: Create ProviderConfig and test bucket provisioning
+        run: |
+          set -euo pipefail
+          
+          # Create secret with Garage credentials
+          cat <<EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: garage-creds
+            namespace: crossplane-system
+          type: Opaque
+          stringData:
+            credentials: |
+              {
+                "endpoint": "http://garage.garage-system.svc.cluster.local:3903",
+                "adminToken": "test-admin-token"
+              }
+          EOF
+
+          # Create ProviderConfig
+          cat <<EOF | kubectl apply -f -
+          apiVersion: garage.crossplane.io/v1beta1
+          kind: ProviderConfig
+          metadata:
+            name: default
+          spec:
+            credentials:
+              source: Secret
+              secretRef:
+                name: garage-creds
+                namespace: crossplane-system
+                key: credentials
+          EOF
+
+          # Create a test bucket
+          cat <<EOF | kubectl apply -f -
+          apiVersion: garage.crossplane.io/v1alpha1
+          kind: Bucket
+          metadata:
+            name: test-bucket
+            namespace: default
+          spec:
+            forProvider:
+              globalAlias: integration-test-bucket
+            providerConfigRef:
+              name: default
+          EOF
+
+          # Wait for bucket to be provisioned
+          echo "Waiting for bucket to be provisioned..."
+          for i in $(seq 1 60); do
+            STATUS=$(kubectl get bucket test-bucket -n default -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "Unknown")
+            SYNCED=$(kubectl get bucket test-bucket -n default -o jsonpath='{.status.conditions[?(@.type=="Synced")].status}' 2>/dev/null || echo "Unknown")
+            echo "Attempt $i: Ready=$STATUS, Synced=$SYNCED"
+            
+            if [ "$STATUS" = "True" ] && [ "$SYNCED" = "True" ]; then
+              echo ""
+              echo "=========================================="
+              echo "SUCCESS: Bucket provisioned successfully!"
+              echo "=========================================="
+              kubectl get bucket test-bucket -n default -o yaml
+              exit 0
+            fi
+            
+            sleep 5
+          done
+          
+          echo "Bucket provisioning timed out"
+          kubectl get bucket test-bucket -n default -o yaml
+          kubectl logs -n crossplane-system -l pkg.crossplane.io/provider=provider-garage --tail=100
+          exit 1
+
+      - name: Cleanup test resources
+        if: always()
+        run: |
+          kubectl delete bucket test-bucket -n default --ignore-not-found=true
+          kubectl delete provider provider-garage --ignore-not-found=true
+          kubectl delete providerconfig default --ignore-not-found=true
+          kubectl delete secret garage-creds -n crossplane-system --ignore-not-found=true
+          kubectl delete controllerconfig provider-garage-config --ignore-not-found=true
+          kubectl delete namespace garage-system --ignore-not-found=true
+          echo "Test resources cleaned up"
