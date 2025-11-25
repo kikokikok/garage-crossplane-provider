@@ -1,4 +1,4 @@
-apiVersion: meta.pkg.crossplane.io/v1alpha1
+apiVersion: meta.pkg.crossplane.io/v1
 kind: Provider
 metadata:
   name: provider-garage
@@ -25,6 +25,3 @@ metadata:
       ```
       
       See https://github.com/kikokikok/garage-crossplane-provider for full documentation.
-spec:
-  controller:
-    image: ghcr.io/kikokikok/garage-crossplane-provider:latest

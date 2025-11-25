@@ -44,6 +44,12 @@ test-integration: ## Run integration tests (requires Kind cluster)
 	@echo "Running integration tests..."
 	@go test -v -tags=integration ./test/integration/...
 
+.PHONY: e2e
+e2e: generate-crds ## Run end-to-end integration tests using Kind
+	@echo "Running e2e integration tests..."
+	@chmod +x cluster/local/integration_tests.sh
+	@./cluster/local/integration_tests.sh
+
 ##@ Code Quality
 
 .PHONY: clean
