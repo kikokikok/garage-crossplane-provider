@@ -378,7 +378,14 @@ jobs:
           # Configure Garage cluster layout
           echo "Configuring Garage cluster layout..."
           sleep 5
-          NODE_ID=$(kubectl exec -n garage-system garage-0 -- /garage node id -q | cut -d@ -f1)
+          NODE_ID_RAW=$(kubectl exec -n garage-system garage-0 -- /garage node id -q 2>&1)
+          if [ $? -ne 0 ]; then
+            echo "ERROR: Failed to execute garage node id command" >&2
+            echo "$NODE_ID_RAW"
+            kubectl logs -n garage-system garage-0 --tail=50
+            exit 1
+          fi
+          NODE_ID=$(echo "$NODE_ID_RAW" | cut -d@ -f1)
           if [ -z "$NODE_ID" ]; then
             echo "ERROR: Failed to get Garage node ID" >&2
             kubectl logs -n garage-system garage-0 --tail=50
