@@ -146,6 +146,9 @@ jobs:
           # Create namespace for Garage
           kubectl create namespace garage-system
 
+          # Generate a random RPC secret
+          RPC_SECRET=$(openssl rand -hex 32)
+
           # Create Garage configuration
           cat <<EOF | kubectl apply -f -
           apiVersion: v1
@@ -162,7 +165,7 @@ jobs:
               
               [rpc]
               bind_addr = "[::]:3901"
-              secret = "$(openssl rand -hex 32)"
+              secret = "${RPC_SECRET}"
               
               [s3_api]
               s3_region = "garage"
@@ -248,7 +251,8 @@ jobs:
           kubectl rollout status statefulset/garage -n garage-system --timeout=120s
 
           # Configure Garage cluster layout
-          kubectl exec -n garage-system garage-0 -- /garage layout assign -z dc1 -c 1G \$(kubectl exec -n garage-system garage-0 -- /garage node id -q | cut -d@ -f1)
+          NODE_ID=$(kubectl exec -n garage-system garage-0 -- /garage node id -q | cut -d@ -f1)
+          kubectl exec -n garage-system garage-0 -- /garage layout assign -z dc1 -c 1G "$NODE_ID"
           kubectl exec -n garage-system garage-0 -- /garage layout apply --version 1
 
       - name: Create ProviderConfig for Garage
@@ -335,7 +339,9 @@ jobs:
             namespace: crossplane-system
           EOF
 
-          # Create provider deployment
+          # Create provider deployment simulating how Crossplane deploys it
+          # Note: We explicitly set empty command/args to simulate Crossplane behavior
+          # that was causing "no command specified" errors
           cat <<EOF | kubectl apply -f -
           apiVersion: apps/v1
           kind: Deployment
@@ -357,8 +363,8 @@ jobs:
                 - name: provider
                   image: provider-garage:test
                   imagePullPolicy: Never
-                  args:
-                  - --debug
+                  # Empty command/args to simulate Crossplane's behavior
+                  # The container must start using ENTRYPOINT from the image
           EOF
 
           # Wait for provider to be ready
@@ -384,7 +390,7 @@ jobs:
 
           # Wait for bucket to be created (with retries)
           echo "Waiting for bucket to be provisioned..."
-          for i in {1..30}; do
+          for i in $(seq 1 30); do
             STATUS=$(kubectl get bucket test-bucket -n default -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "Unknown")
             SYNCED=$(kubectl get bucket test-bucket -n default -o jsonpath='{.status.conditions[?(@.type=="Synced")].status}' 2>/dev/null || echo "Unknown")
             echo "Attempt $i: Ready=$STATUS, Synced=$SYNCED"
@@ -396,7 +402,7 @@ jobs:
             fi
             
             # Show provider logs if not ready
-            if [ $i -eq 15 ] || [ $i -eq 25 ]; then
+            if [ "$i" -eq 15 ] || [ "$i" -eq 25 ]; then
               echo "--- Provider logs ---"
               kubectl logs -n crossplane-system -l app=provider-garage --tail=30
             fi
