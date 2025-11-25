@@ -160,6 +160,7 @@ jobs:
           spec:
             deploymentTemplate:
               spec:
+                selector: {}
                 template:
                   spec:
                     containers:
