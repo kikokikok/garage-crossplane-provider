@@ -447,7 +447,7 @@ jobs:
 
           # Wait for bucket to be provisioned
           echo "Waiting for bucket to be provisioned..."
-          for i in $(seq 1 30); do
+          for i in $(seq 1 60); do
             STATUS=$(kubectl get bucket test-bucket -n default -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "Unknown")
             SYNCED=$(kubectl get bucket test-bucket -n default -o jsonpath='{.status.conditions[?(@.type=="Synced")].status}' 2>/dev/null || echo "Unknown")
             echo "Attempt $i: Ready=$STATUS, Synced=$SYNCED"
