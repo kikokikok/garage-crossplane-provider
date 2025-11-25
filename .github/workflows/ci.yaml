@@ -166,6 +166,7 @@ jobs:
                     containers:
                     - name: package-runtime
                       image: ghcr.io/kikokikok/garage-crossplane-provider:test
+                      imagePullPolicy: Never
                       resources:
                         limits:
                           cpu: "500m"
@@ -183,6 +184,7 @@ jobs:
             name: provider-garage
           spec:
             package: ghcr.io/kikokikok/garage-crossplane-provider:test
+            packagePullPolicy: Never
             runtimeConfigRef:
               name: provider-garage-config
           EOF
@@ -493,10 +495,10 @@ jobs:
       - name: Cleanup test resources
         if: always()
         run: |
-          kubectl delete bucket test-bucket -n default --ignore-not-found=true
-          kubectl delete provider provider-garage --ignore-not-found=true
-          kubectl delete providerconfig default --ignore-not-found=true
-          kubectl delete secret garage-creds -n crossplane-system --ignore-not-found=true
-          kubectl delete deploymentruntimeconfig provider-garage-config --ignore-not-found=true
-          kubectl delete namespace garage-system --ignore-not-found=true
+          kubectl delete bucket test-bucket -n default --ignore-not-found=true || true
+          kubectl delete provider provider-garage --ignore-not-found=true || true
+          kubectl delete providerconfig default --ignore-not-found=true || true
+          kubectl delete secret garage-creds -n crossplane-system --ignore-not-found=true || true
+          kubectl delete deploymentruntimeconfig provider-garage-config --ignore-not-found=true || true
+          kubectl delete namespace garage-system --ignore-not-found=true || true
           echo "Test resources cleaned up"
