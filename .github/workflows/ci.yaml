@@ -467,4 +467,8 @@ jobs:
         run: |
           kubectl delete bucket test-bucket -n default --ignore-not-found=true
           kubectl delete provider provider-garage --ignore-not-found=true
+          kubectl delete providerconfig default --ignore-not-found=true
+          kubectl delete secret garage-creds -n crossplane-system --ignore-not-found=true
+          kubectl delete controllerconfig provider-garage-config --ignore-not-found=true
+          kubectl delete namespace garage-system --ignore-not-found=true
           echo "Test resources cleaned up"
