@@ -197,7 +197,7 @@ jobs:
           for i in $(seq 1 60); do
             POD_STATUS=$(kubectl get pods -n crossplane-system -l pkg.crossplane.io/provider=provider-garage -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "NotFound")
             # Safely get container status with fallback for when containerStatuses array is empty
-            CONTAINER_STATUS=$(kubectl get pods -n crossplane-system -l pkg.crossplane.io/provider=provider-garage -o jsonpath='{.items[0].status.containerStatuses[?(@.name)].state}' 2>/dev/null || echo "{}")
+            CONTAINER_STATUS=$(kubectl get pods -n crossplane-system -l pkg.crossplane.io/provider=provider-garage -o jsonpath='{.items[0].status.containerStatuses[0].state}' 2>/dev/null || echo "{}")
             
             echo "Attempt $i: Pod status=$POD_STATUS"
             
