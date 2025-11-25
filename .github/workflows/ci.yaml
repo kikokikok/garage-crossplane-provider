@@ -130,6 +130,13 @@ jobs:
           kubectl wait --for=condition=available --timeout=300s \
             deployment/crossplane -n crossplane-system
           kubectl get pods -n crossplane-system
+          
+          # Wait for Crossplane CRDs to be registered (needed before applying Provider/ControllerConfig)
+          echo "Waiting for Crossplane CRDs to be registered..."
+          kubectl wait --for=condition=established --timeout=150s \
+            crd/controllerconfigs.pkg.crossplane.io \
+            crd/providers.pkg.crossplane.io
+          echo "Crossplane CRDs are ready!"
 
       - name: Build provider image and create xpkg
         run: |
