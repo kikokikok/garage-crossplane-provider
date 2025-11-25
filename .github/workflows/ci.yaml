@@ -143,6 +143,17 @@ jobs:
         run: |
           set -euo pipefail
           
+          # Create ControllerConfig first (must exist before Provider references it)
+          cat <<EOF | kubectl apply -f -
+          apiVersion: pkg.crossplane.io/v1alpha1
+          kind: ControllerConfig
+          metadata:
+            name: provider-garage-config
+          spec:
+            image: ghcr.io/kikokikok/garage-crossplane-provider:test
+            args: []
+          EOF
+          
           # Create the Provider CR - this is how users install providers in Crossplane
           cat <<EOF | kubectl apply -f -
           apiVersion: pkg.crossplane.io/v1
@@ -153,17 +164,6 @@ jobs:
             package: ghcr.io/kikokikok/garage-crossplane-provider:test
             controllerConfigRef:
               name: provider-garage-config
-          EOF
-          
-          # Create ControllerConfig to use local image
-          cat <<EOF | kubectl apply -f -
-          apiVersion: pkg.crossplane.io/v1alpha1
-          kind: ControllerConfig
-          metadata:
-            name: provider-garage-config
-          spec:
-            image: ghcr.io/kikokikok/garage-crossplane-provider:test
-            args: []
           EOF
           
           echo "Provider CRD applied. Waiting for provider to be installed..."
