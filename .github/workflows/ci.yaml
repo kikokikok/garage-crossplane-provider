@@ -120,11 +120,10 @@ jobs:
         run: |
           helm repo add crossplane-stable https://charts.crossplane.io/stable
           helm repo update
-          # Use Crossplane 1.15.x which supports ControllerConfig (removed in 2.x)
+          # Use Crossplane 2.x (latest stable)
           helm install crossplane crossplane-stable/crossplane \
             --namespace crossplane-system \
             --create-namespace \
-            --version 1.15.2 \
             --wait
 
       - name: Wait for Crossplane to be ready
@@ -133,11 +132,11 @@ jobs:
             deployment/crossplane -n crossplane-system
           kubectl get pods -n crossplane-system
           
-          # Wait for Crossplane CRDs to be registered (needed before applying Provider/ControllerConfig)
+          # Wait for Crossplane CRDs to be registered (needed before applying Provider)
           echo "Waiting for Crossplane CRDs to be registered..."
           kubectl wait --for=condition=established --timeout=150s \
-            crd/controllerconfigs.pkg.crossplane.io \
-            crd/providers.pkg.crossplane.io
+            crd/providers.pkg.crossplane.io \
+            crd/deploymentruntimeconfigs.pkg.crossplane.io
           echo "Crossplane CRDs are ready!"
 
       - name: Build provider image and create xpkg
@@ -152,15 +151,27 @@ jobs:
         run: |
           set -euo pipefail
           
-          # Create ControllerConfig first (must exist before Provider references it)
+          # Create DeploymentRuntimeConfig first (Crossplane 2.x replacement for ControllerConfig)
           cat <<EOF | kubectl apply -f -
-          apiVersion: pkg.crossplane.io/v1alpha1
-          kind: ControllerConfig
+          apiVersion: pkg.crossplane.io/v1beta1
+          kind: DeploymentRuntimeConfig
           metadata:
             name: provider-garage-config
           spec:
-            image: ghcr.io/kikokikok/garage-crossplane-provider:test
-            args: []
+            deploymentTemplate:
+              spec:
+                template:
+                  spec:
+                    containers:
+                    - name: package-runtime
+                      image: ghcr.io/kikokikok/garage-crossplane-provider:test
+                      resources:
+                        limits:
+                          cpu: "500m"
+                          memory: "256Mi"
+                        requests:
+                          cpu: "100m"
+                          memory: "128Mi"
           EOF
           
           # Create the Provider CR - this is how users install providers in Crossplane
@@ -171,7 +182,7 @@ jobs:
             name: provider-garage
           spec:
             package: ghcr.io/kikokikok/garage-crossplane-provider:test
-            controllerConfigRef:
+            runtimeConfigRef:
               name: provider-garage-config
           EOF
           
@@ -485,6 +496,6 @@ jobs:
           kubectl delete provider provider-garage --ignore-not-found=true
           kubectl delete providerconfig default --ignore-not-found=true
           kubectl delete secret garage-creds -n crossplane-system --ignore-not-found=true
-          kubectl delete controllerconfig provider-garage-config --ignore-not-found=true
+          kubectl delete deploymentruntimeconfig provider-garage-config --ignore-not-found=true
           kubectl delete namespace garage-system --ignore-not-found=true
           echo "Test resources cleaned up"
