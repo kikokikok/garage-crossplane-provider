@@ -174,21 +174,30 @@ jobs:
           
           echo "Waiting for provider pod to be created and running..."
           
-          # Wait for the provider revision to be created
+          # Wait for the provider revision to be created (timeout after 30 attempts)
+          REVISION_FOUND=false
           for i in $(seq 1 30); do
             REVISION=$(kubectl get providerrevision -o name 2>/dev/null | head -1 || echo "")
             if [ -n "$REVISION" ]; then
               echo "Provider revision found: $REVISION"
+              REVISION_FOUND=true
               break
             fi
             echo "Attempt $i: Waiting for provider revision..."
             sleep 5
           done
           
+          if [ "$REVISION_FOUND" = "false" ]; then
+            echo "ERROR: Provider revision was not created after 150 seconds"
+            kubectl get providers -o yaml
+            exit 1
+          fi
+          
           # Wait for provider pod to be running
           for i in $(seq 1 60); do
             POD_STATUS=$(kubectl get pods -n crossplane-system -l pkg.crossplane.io/provider=provider-garage -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "NotFound")
-            CONTAINER_STATUS=$(kubectl get pods -n crossplane-system -l pkg.crossplane.io/provider=provider-garage -o jsonpath='{.items[0].status.containerStatuses[0].state}' 2>/dev/null || echo "{}")
+            # Safely get container status with fallback for when containerStatuses array is empty
+            CONTAINER_STATUS=$(kubectl get pods -n crossplane-system -l pkg.crossplane.io/provider=provider-garage -o jsonpath='{.items[0].status.containerStatuses[?(@.name)].state}' 2>/dev/null || echo "{}")
             
             echo "Attempt $i: Pod status=$POD_STATUS"
             
@@ -351,15 +360,19 @@ jobs:
             ports:
             - name: s3
               port: 3900
+              targetPort: 3900
             - name: rpc
               port: 3901
+              targetPort: 3901
             - name: web
               port: 3902
+              targetPort: 3902
             - name: admin
               port: 3903
+              targetPort: 3903
           EOF
 
-          # Wait for Garage to be ready
+          # Wait for Garage to be ready (180s timeout for v2.1.0 which may pull a larger image)
           kubectl rollout status statefulset/garage -n garage-system --timeout=180s
 
           # Configure Garage cluster layout
