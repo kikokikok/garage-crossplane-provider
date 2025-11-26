@@ -10,36 +10,6 @@ metadata:
     meta.crossplane.io/description: |
       Crossplane provider for Garage object storage (S3-compatible).
       Supports bucket management and key creation for Garage deployments.
-    meta.crossplane.io/readme: |
-      # Provider Garage
-      
-      A Crossplane provider for managing Garage object storage resources.
-      
-      ## Supported Resources
-      - Buckets
-      - Keys (Access/Secret keys)
-      
-      ## Requirements
-      - Crossplane v2.0.0 or later
-      - Garage server v0.8+ or v0.9+
 spec:
   controller:
-    # Runtime image reference (updated during build)
     image: ghcr.io/kikokikok/garage-crossplane-provider:latest
-    
-    # RBAC permissions for v2+
-    permissionRequests:
-      # Core Kubernetes resources
-      - apiGroups: [""]
-        resources: [secrets, configmaps, events]
-        verbs: [get, list, watch, create, update, patch, delete]
-      
-      # Provider's own CRDs
-      - apiGroups: [garage.crossplane.io]
-        resources: ["*"]
-        verbs: ["*"]
-      
-      # Crossplane core types (required for provider operation)
-      - apiGroups: [apiextensions.crossplane.io]
-        resources: [compositeresourcedefinitions, compositions]
-        verbs: [get, list, watch]

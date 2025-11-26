@@ -101,9 +101,6 @@ jobs:
     name: Integration Tests
     runs-on: ubuntu-latest
     needs: [lint, test, build]
-    permissions:
-      contents: read
-      packages: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -113,53 +110,150 @@ jobs:
         with:
           go-version: '1.21'
 
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push provider image
+      - name: Install Crossplane CLI
         run: |
-          # Use unique tag for test isolation (run_id + run_attempt)
-          export TEST_TAG="${{ github.run_id }}-${{ github.run_attempt }}"
-          echo "TEST_TAG=${TEST_TAG}" >> $GITHUB_ENV
-          
-          # Set image name using repository context
-          export IMAGE_NAME="ghcr.io/${{ github.repository }}:${TEST_TAG}"
-          echo "IMAGE_NAME=${IMAGE_NAME}" >> $GITHUB_ENV
-          
-          # Build and push the Docker image to ghcr.io
-          make docker-build IMG=${IMAGE_NAME}
-          docker push ${IMAGE_NAME}
-          echo "Pushed image: ${IMAGE_NAME}"
+          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
+          sudo mv crossplane /usr/local/bin/
+          crossplane --version
 
-      - name: Setup Kind
-        uses: helm/kind-action@v1.9.0
-        with:
-          cluster_name: test-cluster
-          wait: 120s
-
-      - name: Configure Kind to pull from ghcr.io
+      - name: Build provider binary
         run: |
-          # Create docker config secret for ghcr.io
-          kubectl create namespace crossplane-system --dry-run=client -o yaml | kubectl apply -f -
-          kubectl create secret docker-registry ghcr-credentials \
-            --namespace crossplane-system \
-            --docker-server=ghcr.io \
-            --docker-username=${{ github.actor }} \
-            --docker-password=${{ secrets.GITHUB_TOKEN }}
+          # Build for linux/amd64 (matching the Kind cluster)
+          mkdir -p bin/linux_amd64
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/linux_amd64/provider cmd/provider/main.go
+          echo "Built provider binary:"
+          ls -la bin/linux_amd64/
 
-      - name: Install Crossplane
+      - name: Build provider Docker image
+        run: |
+          # Use unique tag for test isolation
+          export VERSION="${{ github.run_id }}-${{ github.run_attempt }}"
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          
+          export PACKAGE_IMAGE="crossplane.io/inttests/provider-garage:${VERSION}"
+          echo "PACKAGE_IMAGE=${PACKAGE_IMAGE}" >> $GITHUB_ENV
+          
+          export CONTROLLER_IMAGE="provider-garage-controller:${VERSION}"
+          echo "CONTROLLER_IMAGE=${CONTROLLER_IMAGE}" >> $GITHUB_ENV
+          
+          # Build the Docker image using the provider Dockerfile with build args
+          docker build -f cluster/images/provider-garage/Dockerfile \
+            --build-arg TARGETOS=linux \
+            --build-arg TARGETARCH=amd64 \
+            -t "${CONTROLLER_IMAGE}" .
+          echo "Built controller image: ${CONTROLLER_IMAGE}"
+
+      - name: Generate CRDs
+        run: |
+          mkdir -p package/crds
+          go run sigs.k8s.io/controller-tools/cmd/controller-gen \
+            crd:crdVersions=v1 \
+            paths="./apis/..." \
+            output:crd:artifacts:config=package/crds
+          echo "Generated CRDs:"
+          ls -la package/crds/
+
+      - name: Build Crossplane package (xpkg)
+        run: |
+          # Update crossplane.yaml with the controller image reference
+          sed -i "s|image:.*|image: ${CONTROLLER_IMAGE}|g" package/crossplane.yaml || true
+          
+          # Build the xpkg
+          crossplane xpkg build \
+            --package-root=package \
+            --package-file=provider-garage.xpkg
+          
+          echo "Built xpkg:"
+          ls -la provider-garage.xpkg
+
+      - name: Setup package cache
+        run: |
+          # Create local package cache directory
+          CACHE_PATH="${PWD}/.work/inttest-package-cache"
+          mkdir -p "${CACHE_PATH}"
+          echo "CACHE_PATH=${CACHE_PATH}" >> $GITHUB_ENV
+          
+          # Tag the controller image for loading into Kind
+          docker tag "${CONTROLLER_IMAGE}" "${PACKAGE_IMAGE}"
+          
+          # Extract the xpkg to the cache
+          crossplane xpkg extract --from-xpkg provider-garage.xpkg -o "${CACHE_PATH}/provider-garage.gz"
+          chmod 644 "${CACHE_PATH}/provider-garage.gz"
+          
+          echo "Package cache contents:"
+          ls -la "${CACHE_PATH}/"
+
+      - name: Setup Kind with package cache mount
+        run: |
+          # Create Kind cluster with cache mount
+          cat <<EOF | kind create cluster --name=test-cluster --wait=5m --config=-
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          nodes:
+          - role: control-plane
+            extraMounts:
+            - hostPath: "${CACHE_PATH}/"
+              containerPath: /cache
+          EOF
+          
+          # Load controller image into Kind
+          kind load docker-image "${CONTROLLER_IMAGE}" --name=test-cluster
+          echo "Loaded controller image into Kind"
+
+      - name: Setup package cache PV/PVC
+        run: |
+          # Create crossplane-system namespace
+          kubectl create ns crossplane-system
+          
+          # Create PersistentVolume for package cache
+          cat <<EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: PersistentVolume
+          metadata:
+            name: package-cache
+            labels:
+              type: local
+          spec:
+            storageClassName: manual
+            capacity:
+              storage: 5Mi
+            accessModes:
+              - ReadWriteOnce
+            hostPath:
+              path: "/cache"
+          EOF
+          
+          # Create PersistentVolumeClaim for package cache
+          cat <<EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: package-cache
+            namespace: crossplane-system
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            volumeName: package-cache
+            storageClassName: manual
+            resources:
+              requests:
+                storage: 1Mi
+          EOF
+          
+          echo "PV/PVC created for package cache"
+
+      - name: Install Crossplane with package cache
         run: |
           helm repo add crossplane-stable https://charts.crossplane.io/stable
           helm repo update
-          # Use Crossplane 2.x (latest stable)
+          
+          # Install Crossplane with package cache PVC
           helm install crossplane crossplane-stable/crossplane \
             --namespace crossplane-system \
-            --create-namespace \
-            --wait
+            --wait \
+            --set packageCache.pvc=package-cache
+          
+          echo "Crossplane installed with package cache"
 
       - name: Wait for Crossplane to be ready
         run: |
@@ -167,57 +261,29 @@ jobs:
             deployment/crossplane -n crossplane-system
           kubectl get pods -n crossplane-system
           
-          # Wait for Crossplane CRDs to be registered (needed before applying Provider)
+          # Wait for Crossplane CRDs to be registered
           echo "Waiting for Crossplane CRDs to be registered..."
           kubectl wait --for=condition=established --timeout=150s \
-            crd/providers.pkg.crossplane.io \
-            crd/deploymentruntimeconfigs.pkg.crossplane.io
+            crd/providers.pkg.crossplane.io
           echo "Crossplane CRDs are ready!"
+          
+          # Verify cache mount
+          echo "Checking Kind node cache contents:"
+          docker exec test-cluster-control-plane ls -la /cache || true
 
       - name: Install provider using Crossplane Provider CRD
         run: |
           set -euo pipefail
           
-          # Create DeploymentRuntimeConfig first (Crossplane 2.x replacement for ControllerConfig)
-          cat <<EOF | kubectl apply -f -
-          apiVersion: pkg.crossplane.io/v1beta1
-          kind: DeploymentRuntimeConfig
-          metadata:
-            name: provider-garage-config
-          spec:
-            deploymentTemplate:
-              spec:
-                selector: {}
-                template:
-                  spec:
-                    containers:
-                    - name: package-runtime
-                      image: ${IMAGE_NAME}
-                      imagePullPolicy: Always
-                      resources:
-                        limits:
-                          cpu: "500m"
-                          memory: "256Mi"
-                        requests:
-                          cpu: "100m"
-                          memory: "128Mi"
-                    imagePullSecrets:
-                    - name: ghcr-credentials
-          EOF
-          
-          # Create the Provider CR - this is how users install providers in Crossplane
+          # Install provider with packagePullPolicy: Never (use cached package)
           cat <<EOF | kubectl apply -f -
           apiVersion: pkg.crossplane.io/v1
           kind: Provider
           metadata:
             name: provider-garage
           spec:
-            package: ${IMAGE_NAME}
-            packagePullPolicy: Always
-            packagePullSecrets:
-            - name: ghcr-credentials
-            runtimeConfigRef:
-              name: provider-garage-config
+            package: provider-garage
+            packagePullPolicy: Never
           EOF
           
           echo "Provider CRD applied. Waiting for provider to be installed..."
@@ -530,35 +596,5 @@ jobs:
           kubectl delete provider provider-garage --ignore-not-found=true || true
           kubectl delete providerconfig default --ignore-not-found=true || true
           kubectl delete secret garage-creds -n crossplane-system --ignore-not-found=true || true
-          kubectl delete deploymentruntimeconfig provider-garage-config --ignore-not-found=true || true
           kubectl delete namespace garage-system --ignore-not-found=true || true
           echo "Test resources cleaned up"
-
-      - name: Delete test image from ghcr.io
-        if: always()
-        continue-on-error: true
-        run: |
-          # Delete the test image from ghcr.io to avoid clutter
-          # Using GitHub API to delete the package version
-          echo "Cleaning up test image: ${IMAGE_NAME}"
-          
-          # Extract package name from repository (e.g., garage-crossplane-provider from kikokikok/garage-crossplane-provider)
-          PACKAGE_NAME=$(echo "${{ github.repository }}" | cut -d'/' -f2)
-          
-          # Get the package version ID
-          PACKAGE_VERSION_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/users/${{ github.repository_owner }}/packages/container/${PACKAGE_NAME}/versions" \
-            | jq -r ".[] | select(.metadata.container.tags[] == \"${TEST_TAG}\") | .id" || echo "")
-          
-          if [ -n "$PACKAGE_VERSION_ID" ] && [ "$PACKAGE_VERSION_ID" != "null" ]; then
-            echo "Found package version ID: $PACKAGE_VERSION_ID"
-            curl -s -X DELETE \
-              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/users/${{ github.repository_owner }}/packages/container/${PACKAGE_NAME}/versions/${PACKAGE_VERSION_ID}" \
-              && echo "Test image deleted successfully" \
-              || echo "Failed to delete test image (may require additional permissions)"
-          else
-            echo "Could not find package version to delete (this is OK if it was not pushed)"
-          fi
