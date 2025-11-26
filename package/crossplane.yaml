@@ -1,27 +1,45 @@
+# crossplane.yaml - Crossplane v2+ Provider Package Metadata
 apiVersion: meta.pkg.crossplane.io/v1
 kind: Provider
 metadata:
   name: provider-garage
   annotations:
-    meta.crossplane.io/maintainer: kikokikok
+    meta.crossplane.io/maintainer: Kyriba Cloud Platform Team <christian.klat@kyriba.com>
     meta.crossplane.io/source: github.com/kikokikok/garage-crossplane-provider
     meta.crossplane.io/license: Apache-2.0
     meta.crossplane.io/description: |
-      Native Crossplane provider for Garage v2+ object storage.
-      Built using native Garage Admin API v2, supports only Crossplane v2+ with namespaced resources.
+      Crossplane provider for Garage object storage (S3-compatible).
+      Supports bucket management and key creation for Garage deployments.
     meta.crossplane.io/readme: |
-      # provider-garage
+      # Provider Garage
       
-      A native Crossplane provider for Garage v2+ using Admin API v2.
+      A Crossplane provider for managing Garage object storage resources.
       
-      ## Features
-      - Native implementation (no Terraform/Upjet)
-      - Supports only Crossplane v2+ with namespaced resources
-      - Supports only Garage v2+ Admin API
+      ## Supported Resources
+      - Buckets
+      - Keys (Access/Secret keys)
       
-      ## Installation
-      ```bash
-      kubectl crossplane install provider ghcr.io/kikokikok/garage-crossplane-provider:latest
-      ```
+      ## Requirements
+      - Crossplane v2.0.0 or later
+      - Garage server v0.8+ or v0.9+
+spec:
+  controller:
+    # Runtime image reference (updated during build)
+    image: ghcr.io/kikokikok/garage-crossplane-provider:latest
+    
+    # RBAC permissions for v2+
+    permissionRequests:
+      # Core Kubernetes resources
+      - apiGroups: [""]
+        resources: [secrets, configmaps, events]
+        verbs: [get, list, watch, create, update, patch, delete]
       
-      See https://github.com/kikokikok/garage-crossplane-provider for full documentation.
+      # Provider's own CRDs
+      - apiGroups: [garage.crossplane.io]
+        resources: ["*"]
+        verbs: ["*"]
+      
+      # Crossplane core types (required for provider operation)
+      - apiGroups: [apiextensions.crossplane.io]
+        resources: [compositeresourcedefinitions, compositions]
+        verbs: [get, list, watch]
