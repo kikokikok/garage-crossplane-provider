@@ -101,6 +101,9 @@ jobs:
     name: Integration Tests
     runs-on: ubuntu-latest
     needs: [lint, test, build]
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -110,11 +113,43 @@ jobs:
         with:
           go-version: '1.21'
 
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push provider image
+        run: |
+          # Use unique tag for test isolation (run_id + run_attempt)
+          export TEST_TAG="${{ github.run_id }}-${{ github.run_attempt }}"
+          echo "TEST_TAG=${TEST_TAG}" >> $GITHUB_ENV
+          
+          # Set image name using repository context
+          export IMAGE_NAME="ghcr.io/${{ github.repository }}:${TEST_TAG}"
+          echo "IMAGE_NAME=${IMAGE_NAME}" >> $GITHUB_ENV
+          
+          # Build and push the Docker image to ghcr.io
+          make docker-build IMG=${IMAGE_NAME}
+          docker push ${IMAGE_NAME}
+          echo "Pushed image: ${IMAGE_NAME}"
+
       - name: Setup Kind
         uses: helm/kind-action@v1.9.0
         with:
           cluster_name: test-cluster
           wait: 120s
+
+      - name: Configure Kind to pull from ghcr.io
+        run: |
+          # Create docker config secret for ghcr.io
+          kubectl create namespace crossplane-system --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret docker-registry ghcr-credentials \
+            --namespace crossplane-system \
+            --docker-server=ghcr.io \
+            --docker-username=${{ github.actor }} \
+            --docker-password=${{ secrets.GITHUB_TOKEN }}
 
       - name: Install Crossplane
         run: |
@@ -139,14 +174,6 @@ jobs:
             crd/deploymentruntimeconfigs.pkg.crossplane.io
           echo "Crossplane CRDs are ready!"
 
-      - name: Build provider image and create xpkg
-        run: |
-          # Build the Docker image
-          make docker-build IMG=ghcr.io/kikokikok/garage-crossplane-provider:test
-          
-          # Load the image into kind
-          kind load docker-image ghcr.io/kikokikok/garage-crossplane-provider:test --name test-cluster
-
       - name: Install provider using Crossplane Provider CRD
         run: |
           set -euo pipefail
@@ -165,8 +192,8 @@ jobs:
                   spec:
                     containers:
                     - name: package-runtime
-                      image: ghcr.io/kikokikok/garage-crossplane-provider:test
-                      imagePullPolicy: Never
+                      image: ${IMAGE_NAME}
+                      imagePullPolicy: Always
                       resources:
                         limits:
                           cpu: "500m"
@@ -174,6 +201,8 @@ jobs:
                         requests:
                           cpu: "100m"
                           memory: "128Mi"
+                    imagePullSecrets:
+                    - name: ghcr-credentials
           EOF
           
           # Create the Provider CR - this is how users install providers in Crossplane
@@ -183,8 +212,10 @@ jobs:
           metadata:
             name: provider-garage
           spec:
-            package: ghcr.io/kikokikok/garage-crossplane-provider:test
-            packagePullPolicy: Never
+            package: ${IMAGE_NAME}
+            packagePullPolicy: Always
+            packagePullSecrets:
+            - name: ghcr-credentials
             runtimeConfigRef:
               name: provider-garage-config
           EOF
@@ -502,3 +533,32 @@ jobs:
           kubectl delete deploymentruntimeconfig provider-garage-config --ignore-not-found=true || true
           kubectl delete namespace garage-system --ignore-not-found=true || true
           echo "Test resources cleaned up"
+
+      - name: Delete test image from ghcr.io
+        if: always()
+        continue-on-error: true
+        run: |
+          # Delete the test image from ghcr.io to avoid clutter
+          # Using GitHub API to delete the package version
+          echo "Cleaning up test image: ${IMAGE_NAME}"
+          
+          # Extract package name from repository (e.g., garage-crossplane-provider from kikokikok/garage-crossplane-provider)
+          PACKAGE_NAME=$(echo "${{ github.repository }}" | cut -d'/' -f2)
+          
+          # Get the package version ID
+          PACKAGE_VERSION_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/users/${{ github.repository_owner }}/packages/container/${PACKAGE_NAME}/versions" \
+            | jq -r ".[] | select(.metadata.container.tags[] == \"${TEST_TAG}\") | .id" || echo "")
+          
+          if [ -n "$PACKAGE_VERSION_ID" ] && [ "$PACKAGE_VERSION_ID" != "null" ]; then
+            echo "Found package version ID: $PACKAGE_VERSION_ID"
+            curl -s -X DELETE \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/users/${{ github.repository_owner }}/packages/container/${PACKAGE_NAME}/versions/${PACKAGE_VERSION_ID}" \
+              && echo "Test image deleted successfully" \
+              || echo "Failed to delete test image (may require additional permissions)"
+          else
+            echo "Could not find package version to delete (this is OK if it was not pushed)"
+          fi
