@@ -1,124 +1,126 @@
-# Makefile for provider-garage
-
-# Project
+# ====================================================================================
+# Setup Project
 PROJECT_NAME := provider-garage
 PROJECT_REPO := github.com/kikokikok/$(PROJECT_NAME)
 
-# Image
-REGISTRY ?= ghcr.io
-IMAGE_NAME ?= kikokikok/provider-garage
-IMG ?= $(REGISTRY)/$(IMAGE_NAME):latest
-
-# Build
 PLATFORMS ?= linux_amd64 linux_arm64
-GO_BUILD_FLAGS := -v
+-include build/makelib/common.mk
 
-# Directories
-BIN_DIR := bin
-BUILD_DIR := build
-PACKAGE_DIR := package
+# ====================================================================================
+# Setup Output
 
-.PHONY: help
-help: ## Display this help
-	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
+-include build/makelib/output.mk
 
-##@ Development
+# ====================================================================================
+# Setup Go
 
-.PHONY: build
-build: ## Build provider binary
-	@echo "Building $(PROJECT_NAME)..."
-	@mkdir -p $(BIN_DIR)
-	@CGO_ENABLED=0 go build $(GO_BUILD_FLAGS) -o $(BIN_DIR)/provider cmd/provider/main.go
+NPROCS ?= 1
+GO_TEST_PARALLEL := $(shell echo $$(( $(NPROCS) / 2 )))
+GO_STATIC_PACKAGES = $(GO_PROJECT)/cmd/provider
+GO_LDFLAGS += -X $(GO_PROJECT)/internal/version.Version=$(VERSION)
+GO_SUBDIRS += cmd internal apis
+GO111MODULE = on
+GOLANGCILINT_VERSION = 2.1.2
+-include build/makelib/golang.mk
 
-.PHONY: run
-run: generate fmt vet ## Run the provider locally
-	go run cmd/provider/main.go
+# ====================================================================================
+# Setup Kubernetes tools
 
-.PHONY: test
-test: ## Run unit tests
-	@echo "Running unit tests..."
-	@go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+-include build/makelib/k8s_tools.mk
 
-.PHONY: test-integration
-test-integration: ## Run integration tests (requires Kind cluster)
-	@echo "Running integration tests..."
-	@go test -v -tags=integration ./test/integration/...
+# ====================================================================================
+# Setup Images
 
-.PHONY: e2e
-e2e: generate-crds ## Run end-to-end integration tests using Kind
-	@echo "Running e2e integration tests..."
-	@chmod +x cluster/local/integration_tests.sh
-	@./cluster/local/integration_tests.sh
+IMAGES = provider-garage
+-include build/makelib/imagelight.mk
 
-##@ Code Quality
+# ====================================================================================
+# Setup XPKG
 
-.PHONY: clean
-clean: ## Clean build artifacts
-	@echo "Cleaning build artifacts..."
-	@rm -rf $(BIN_DIR) $(BUILD_DIR) $(PACKAGE_DIR)/crds coverage.out
+XPKG_REG_ORGS ?= ghcr.io/kikokikok
+# NOTE: skip promoting on ghcr.io as channel tags are inferred
+XPKG_REG_ORGS_NO_PROMOTE ?= ghcr.io/kikokikok
+XPKGS = provider-garage
+-include build/makelib/xpkg.mk
 
-.PHONY: tidy
-tidy: ## Run go mod tidy
-	@echo "Running go mod tidy..."
-	@go mod tidy
+# NOTE: we force image building to happen prior to xpkg build so that
+# we ensure image is present in daemon.
+xpkg.build.provider-garage: do.build.images
 
-.PHONY: fmt
-fmt: ## Run go fmt
-	@echo "Running go fmt..."
-	@go fmt ./...
+fallthrough: submodules
+	@echo Initial setup complete. Running make again . . .
+	@make
 
-.PHONY: vet
-vet: ## Run go vet
-	@echo "Running go vet..."
-	@go vet ./...
+# integration tests
+e2e.run: test-integration
 
-.PHONY: lint
-lint: ## Run golangci-lint
-	@echo "Running golangci-lint..."
-	@golangci-lint run --timeout=5m
+# Run integration tests.
+test-integration: $(KIND) $(KUBECTL) $(CROSSPLANE_CLI) $(HELM3)
+	@$(INFO) running integration tests using kind $(KIND_VERSION)
+	@KIND_NODE_IMAGE_TAG=${KIND_NODE_IMAGE_TAG} $(ROOT_DIR)/cluster/local/integration_tests.sh || $(FAIL)
+	@$(OK) integration tests passed
 
-##@ Code Generation
+# Update the submodules, such as the common build scripts.
+submodules:
+	@git submodule sync
+	@git submodule update --init --recursive
 
-.PHONY: generate
-generate: ## Generate code (CRDs, deepcopy, etc)
-	@echo "Generating code..."
-	@go generate ./...
-	@go run sigs.k8s.io/controller-tools/cmd/controller-gen object:headerFile=hack/boilerplate.go.txt paths=./apis/...
+# NOTE: the build submodule currently overrides XDG_CACHE_HOME in
+# order to force Helm 3 to use the .work/helm directory. This causes Go on
+# Linux machines to use that directory as the build cache as well. We should
+# adjust this behavior in the build submodule because it is also causing Linux
+# users to duplicate their build cache, but for now we just make it easier to
+# identify its location in CI so that we cache between builds.
+go.cachedir:
+	@go env GOCACHE
 
-.PHONY: generate-crds
-generate-crds: ## Generate CRDs
-	@echo "Generating CRDs..."
-	@mkdir -p $(PACKAGE_DIR)/crds
-	@go run sigs.k8s.io/controller-tools/cmd/controller-gen \
-		crd:crdVersions=v1 \
-		paths="./apis/..." \
-		output:crd:artifacts:config=$(PACKAGE_DIR)/crds
+go.mod.cachedir:
+	@go env GOMODCACHE
 
-##@ Docker
+# NOTE: we must ensure crossplane CLI is installed in tool cache prior to build
+# as including the k8s_tools machinery prior to the xpkg machinery sets CROSSPLANE_CLI to
+# point to tool cache.
+build.init: $(CROSSPLANE_CLI)
 
-.PHONY: docker-build
-docker-build: ## Build docker image
-	@echo "Building Docker image $(IMG)..."
-	docker build -t $(IMG) .
+# This is for running out-of-cluster locally, and is for convenience. Running
+# this make target will print out the command which was used. For more control,
+# try running the binary directly with different arguments.
+run: go.build
+	@$(INFO) Running Crossplane locally out-of-cluster . . .
+	@# To see other arguments that can be provided, run the command with --help instead
+	$(GO_OUT_DIR)/provider --debug
 
-.PHONY: docker-push
-docker-push: ## Push docker image
-	@echo "Pushing Docker image $(IMG)..."
-	docker push $(IMG)
+dev: $(KIND) $(KUBECTL)
+	@$(INFO) Creating kind cluster
+	@$(KIND) create cluster --name=$(PROJECT_NAME)-dev
+	@$(KUBECTL) cluster-info --context kind-$(PROJECT_NAME)-dev
+	@$(INFO) Installing Provider Garage CRDs
+	@$(KUBECTL) apply -R -f package/crds
+	@$(INFO) Starting Provider Garage controllers
+	@$(GO) run cmd/provider/main.go --debug
 
-.PHONY: docker-build-push
-docker-build-push: docker-build docker-push ## Build and push docker image
+dev-clean: $(KIND) $(KUBECTL)
+	@$(INFO) Deleting kind cluster
+	@$(KIND) delete cluster --name=$(PROJECT_NAME)-dev
 
-##@ Deployment
+.PHONY: submodules fallthrough test-integration run dev dev-clean
 
-.PHONY: install-crds
-install-crds: generate-crds ## Install CRDs into the cluster
-	@echo "Installing CRDs..."
-	kubectl apply -f $(PACKAGE_DIR)/crds/
+# ====================================================================================
+# Special Targets
 
-.PHONY: uninstall-crds
-uninstall-crds: ## Uninstall CRDs from the cluster
-	@echo "Uninstalling CRDs..."
-	kubectl delete -f $(PACKAGE_DIR)/crds/ --ignore-not-found=true
+define CROSSPLANE_MAKE_HELP
+Crossplane Targets:
+    submodules            Update the submodules, such as the common build scripts.
+    run                   Run crossplane locally, out-of-cluster. Useful for development.
 
-.DEFAULT_GOAL := help
+endef
+# The reason CROSSPLANE_MAKE_HELP is used instead of CROSSPLANE_HELP is because the crossplane
+# binary will try to use CROSSPLANE_HELP if it is set, and this is for something different.
+export CROSSPLANE_MAKE_HELP
+
+crossplane.help:
+	@echo "$$CROSSPLANE_MAKE_HELP"
+
+help-special: crossplane.help
+
+.PHONY: crossplane.help help-special

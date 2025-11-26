@@ -2,599 +2,282 @@ name: CI
 
 on:
   push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
+    branches:
+      - main
+      - release-*
+  pull_request: {}
+  workflow_dispatch: {}
+
+env:
+  # Common versions
+  GO_VERSION: '1.23'
+  GOLANGCI_VERSION: 'v2.1.2'
+  DOCKER_BUILDX_VERSION: 'v0.23.0'
+
+# Default permissions for all jobs
+permissions:
+  contents: read
 
 jobs:
+  detect-noop:
+    runs-on: ubuntu-22.04
+    outputs:
+      noop: ${{ steps.noop.outputs.should_skip }}
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Detect No-op Changes
+        id: noop
+        uses: fkirc/skip-duplicate-actions@v5.3.1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          paths_ignore: '["**.md", "**.png", "**.jpg"]'
+          do_not_skip: '["workflow_dispatch", "schedule", "push"]'
+
   lint:
-    name: Lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+    needs: detect-noop
+    if: needs.detect-noop.outputs.noop != 'true'
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: ${{ env.GO_VERSION }}
 
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v4
-        with:
-          version: latest
-          args: --timeout=5m
+      - name: Find the Go Build Cache
+        id: go
+        run: echo "cachedir=$(make go.cachedir)" >> $GITHUB_ENV
 
-  test:
-    name: Unit Tests
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-
-      - name: Cache Go modules
+      - name: Cache the Go Build Cache
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
+          path: ${{ env.cachedir }}
+          key: ${{ runner.os }}-build-lint-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-build-lint-
 
-      - name: Download dependencies
-        run: go mod download
-
-      - name: Run unit tests
-        run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+      - name: Cache Go Dependencies
+        uses: actions/cache@v4
         with:
-          file: ./coverage.out
-          flags: unittests
-          name: codecov-umbrella
+          path: .work/pkg
+          key: ${{ runner.os }}-pkg-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-pkg-
 
-  build:
-    name: Build
-    runs-on: ubuntu-latest
+      - name: Vendor Dependencies
+        run: make vendor vendor.check
+
+      # We could run 'make lint' but we prefer this action because it leaves
+      # 'annotations' (i.e. it comments on PRs to point out linter violations).
+      - name: Lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: ${{ env.GOLANGCI_VERSION }}
+
+  check-diff:
+    runs-on: ubuntu-22.04
+    needs: detect-noop
+    if: needs.detect-noop.outputs.noop != 'true'
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: ${{ env.GO_VERSION }}
 
-      - name: Cache Go modules
+      - name: Find the Go Build Cache
+        id: go
+        run: echo "cachedir=$(make go.cachedir)" >> $GITHUB_ENV
+
+      - name: Cache the Go Build Cache
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
+          path: ${{ env.cachedir }}
+          key: ${{ runner.os }}-build-check-diff-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-build-check-diff-
 
-      - name: Download dependencies
-        run: go mod download
+      - name: Cache Go Dependencies
+        uses: actions/cache@v4
+        with:
+          path: .work/pkg
+          key: ${{ runner.os }}-pkg-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-pkg-
 
-      - name: Build binary
-        run: make build
+      - name: Vendor Dependencies
+        run: make vendor vendor.check
 
-      - name: Verify binary
+      - name: Check Diff
+        id: check-diff
         run: |
-          if [ ! -f bin/provider ]; then
-            echo "Binary not found!"
-            exit 1
-          fi
-          file bin/provider
-          ls -lh bin/provider
+          mkdir -p _output
+          make check-diff
+
+      - name: Show diff
+        if: failure() && steps.check-diff.outcome == 'failure'
+        run: git diff
+
+  unit-tests:
+    runs-on: ubuntu-22.04
+    needs: detect-noop
+    if: needs.detect-noop.outputs.noop != 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Fetch History
+        run: git fetch --prune --unshallow
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Find the Go Build Cache
+        id: go
+        run: echo "cachedir=$(make go.cachedir)" >> $GITHUB_ENV
+
+      - name: Cache the Go Build Cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.cachedir }}
+          key: ${{ runner.os }}-build-unit-tests-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-build-unit-tests-
+
+      - name: Cache Go Dependencies
+        uses: actions/cache@v4
+        with:
+          path: .work/pkg
+          key: ${{ runner.os }}-pkg-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-pkg-
+
+      - name: Vendor Dependencies
+        run: make vendor vendor.check
+
+      - name: Run Unit Tests
+        run: make -j2 test
+
+      - name: Publish Unit Test Coverage
+        uses: codecov/codecov-action@v3
+        with:
+          flags: unittests
+          file: _output/tests/linux_amd64/coverage.txt
+
+  build-and-publish:
+    runs-on: ubuntu-22.04
+    needs: detect-noop
+    if: needs.detect-noop.outputs.noop != 'true'
+
+    steps:
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@v2
+        with:
+          platforms: all
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          version: ${{ env.DOCKER_BUILDX_VERSION }}
+          install: true
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Fetch History
+        run: git fetch --prune --unshallow
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Find the Go Build Cache
+        id: go
+        run: echo "cachedir=$(make go.cachedir)" >> $GITHUB_ENV
+
+      - name: Cache the Go Build Cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.cachedir }}
+          key: ${{ runner.os }}-build-publish-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-build-publish-
+
+      - name: Cache Go Dependencies
+        uses: actions/cache@v4
+        with:
+          path: .work/pkg
+          key: ${{ runner.os }}-pkg-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-pkg-
+
+      - name: Vendor Dependencies
+        run: make vendor vendor.check
+
+      - name: Build Artifacts
+        run: make -j2 build.all
+        env:
+          # We're using docker buildx, which doesn't actually load the images it
+          # builds by default. Specifying --load does so.
+          BUILD_ARGS: "--load"
+
+      - name: Publish Artifacts to GitHub
+        uses: actions/upload-artifact@v4
+        with:
+          name: output
+          path: _output/**
 
   integration-test:
-    name: Integration Tests
-    runs-on: ubuntu-latest
-    needs: [lint, test, build]
+    runs-on: ubuntu-22.04
+    needs: [lint, unit-tests, build-and-publish]
+    if: needs.detect-noop.outputs.noop != 'true'
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Fetch History
+        run: git fetch --prune --unshallow
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: ${{ env.GO_VERSION }}
 
-      - name: Install Crossplane CLI
-        run: |
-          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
-          sudo mv crossplane /usr/local/bin/
-          crossplane --version
+      - name: Find the Go Build Cache
+        id: go
+        run: echo "cachedir=$(make go.cachedir)" >> $GITHUB_ENV
 
-      - name: Build provider binary
-        run: |
-          # Build for linux/amd64 (matching the Kind cluster)
-          mkdir -p bin/linux_amd64
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/linux_amd64/provider cmd/provider/main.go
-          echo "Built provider binary:"
-          ls -la bin/linux_amd64/
+      - name: Cache the Go Build Cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.cachedir }}
+          key: ${{ runner.os }}-build-integration-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-build-integration-
 
-      - name: Build provider Docker image
-        run: |
-          # Use unique tag for test isolation
-          export VERSION="${{ github.run_id }}-${{ github.run_attempt }}"
-          echo "VERSION=${VERSION}" >> $GITHUB_ENV
-          
-          export PACKAGE_IMAGE="crossplane.io/inttests/provider-garage:${VERSION}"
-          echo "PACKAGE_IMAGE=${PACKAGE_IMAGE}" >> $GITHUB_ENV
-          
-          export CONTROLLER_IMAGE="provider-garage-controller:${VERSION}"
-          echo "CONTROLLER_IMAGE=${CONTROLLER_IMAGE}" >> $GITHUB_ENV
-          
-          # Build the Docker image using the provider Dockerfile with build args
-          docker build -f cluster/images/provider-garage/Dockerfile \
-            --build-arg TARGETOS=linux \
-            --build-arg TARGETARCH=amd64 \
-            -t "${CONTROLLER_IMAGE}" .
-          echo "Built controller image: ${CONTROLLER_IMAGE}"
+      - name: Cache Go Dependencies
+        uses: actions/cache@v4
+        with:
+          path: .work/pkg
+          key: ${{ runner.os }}-pkg-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-pkg-
 
-      - name: Generate CRDs
-        run: |
-          mkdir -p package/crds
-          go run sigs.k8s.io/controller-tools/cmd/controller-gen \
-            crd:crdVersions=v1 \
-            paths="./apis/..." \
-            output:crd:artifacts:config=package/crds
-          echo "Generated CRDs:"
-          ls -la package/crds/
+      - name: Vendor Dependencies
+        run: make vendor vendor.check
 
-      - name: Build Crossplane package (xpkg)
-        run: |
-          # Update crossplane.yaml with the controller image reference
-          sed -i "s|image:.*|image: ${CONTROLLER_IMAGE}|g" package/crossplane.yaml || true
-          
-          # Build the xpkg
-          crossplane xpkg build \
-            --package-root=package \
-            --package-file=provider-garage.xpkg
-          
-          echo "Built xpkg:"
-          ls -la provider-garage.xpkg
-
-      - name: Setup package cache
-        run: |
-          # Create local package cache directory
-          CACHE_PATH="${PWD}/.work/inttest-package-cache"
-          mkdir -p "${CACHE_PATH}"
-          echo "CACHE_PATH=${CACHE_PATH}" >> $GITHUB_ENV
-          
-          # Tag the controller image for loading into Kind
-          docker tag "${CONTROLLER_IMAGE}" "${PACKAGE_IMAGE}"
-          
-          # Extract the xpkg to the cache
-          crossplane xpkg extract --from-xpkg provider-garage.xpkg -o "${CACHE_PATH}/provider-garage.gz"
-          chmod 644 "${CACHE_PATH}/provider-garage.gz"
-          
-          echo "Package cache contents:"
-          ls -la "${CACHE_PATH}/"
-
-      - name: Setup Kind with package cache mount
-        run: |
-          # Create Kind cluster with cache mount
-          cat <<EOF | kind create cluster --name=test-cluster --wait=5m --config=-
-          kind: Cluster
-          apiVersion: kind.x-k8s.io/v1alpha4
-          nodes:
-          - role: control-plane
-            extraMounts:
-            - hostPath: "${CACHE_PATH}/"
-              containerPath: /cache
-          EOF
-          
-          # Load controller image into Kind
-          kind load docker-image "${CONTROLLER_IMAGE}" --name=test-cluster
-          echo "Loaded controller image into Kind"
-
-      - name: Setup package cache PV/PVC
-        run: |
-          # Create crossplane-system namespace
-          kubectl create ns crossplane-system
-          
-          # Create PersistentVolume for package cache
-          cat <<EOF | kubectl apply -f -
-          apiVersion: v1
-          kind: PersistentVolume
-          metadata:
-            name: package-cache
-            labels:
-              type: local
-          spec:
-            storageClassName: manual
-            capacity:
-              storage: 5Mi
-            accessModes:
-              - ReadWriteOnce
-            hostPath:
-              path: "/cache"
-          EOF
-          
-          # Create PersistentVolumeClaim for package cache
-          cat <<EOF | kubectl apply -f -
-          apiVersion: v1
-          kind: PersistentVolumeClaim
-          metadata:
-            name: package-cache
-            namespace: crossplane-system
-          spec:
-            accessModes:
-              - ReadWriteOnce
-            volumeName: package-cache
-            storageClassName: manual
-            resources:
-              requests:
-                storage: 1Mi
-          EOF
-          
-          echo "PV/PVC created for package cache"
-
-      - name: Install Crossplane with package cache
-        run: |
-          helm repo add crossplane-stable https://charts.crossplane.io/stable
-          helm repo update
-          
-          # Install Crossplane with package cache PVC
-          helm install crossplane crossplane-stable/crossplane \
-            --namespace crossplane-system \
-            --wait \
-            --set packageCache.pvc=package-cache
-          
-          echo "Crossplane installed with package cache"
-
-      - name: Wait for Crossplane to be ready
-        run: |
-          kubectl wait --for=condition=available --timeout=300s \
-            deployment/crossplane -n crossplane-system
-          kubectl get pods -n crossplane-system
-          
-          # Wait for Crossplane CRDs to be registered
-          echo "Waiting for Crossplane CRDs to be registered..."
-          kubectl wait --for=condition=established --timeout=150s \
-            crd/providers.pkg.crossplane.io
-          echo "Crossplane CRDs are ready!"
-          
-          # Verify cache mount
-          echo "Checking Kind node cache contents:"
-          docker exec test-cluster-control-plane ls -la /cache || true
-
-      - name: Install provider using Crossplane Provider CRD
-        run: |
-          set -euo pipefail
-          
-          # Install provider with packagePullPolicy: Never (use cached package)
-          cat <<EOF | kubectl apply -f -
-          apiVersion: pkg.crossplane.io/v1
-          kind: Provider
-          metadata:
-            name: provider-garage
-          spec:
-            package: provider-garage
-            packagePullPolicy: Never
-          EOF
-          
-          echo "Provider CRD applied. Waiting for provider to be installed..."
-
-      - name: Wait for provider pod to be running
-        run: |
-          set -euo pipefail
-          
-          echo "Waiting for provider pod to be created and running..."
-          
-          # Wait for the provider revision to be created (timeout after 30 attempts)
-          REVISION_FOUND=false
-          for i in $(seq 1 30); do
-            REVISION=$(kubectl get providerrevision -o name 2>/dev/null | head -1 || echo "")
-            if [ -n "$REVISION" ]; then
-              echo "Provider revision found: $REVISION"
-              REVISION_FOUND=true
-              break
-            fi
-            echo "Attempt $i: Waiting for provider revision..."
-            sleep 5
-          done
-          
-          if [ "$REVISION_FOUND" = "false" ]; then
-            echo "ERROR: Provider revision was not created after 150 seconds"
-            kubectl get providers -o yaml
-            exit 1
-          fi
-          
-          # Wait for provider pod to be running
-          for i in $(seq 1 60); do
-            POD_STATUS=$(kubectl get pods -n crossplane-system -l pkg.crossplane.io/provider=provider-garage -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "NotFound")
-            # Safely get container status with fallback for when containerStatuses array is empty
-            CONTAINER_STATUS=$(kubectl get pods -n crossplane-system -l pkg.crossplane.io/provider=provider-garage -o jsonpath='{.items[0].status.containerStatuses[0].state}' 2>/dev/null || echo "{}")
-            
-            echo "Attempt $i: Pod status=$POD_STATUS"
-            
-            if [ "$POD_STATUS" = "Running" ]; then
-              echo ""
-              echo "=========================================="
-              echo "SUCCESS: Provider pod is RUNNING!"
-              echo "=========================================="
-              echo ""
-              echo "=== Pod details ==="
-              kubectl get pods -n crossplane-system -l pkg.crossplane.io/provider=provider-garage -o wide
-              echo ""
-              echo "=== Pod describe ==="
-              kubectl describe pod -n crossplane-system -l pkg.crossplane.io/provider=provider-garage
-              echo ""
-              echo "=== Provider logs (last 50 lines) ==="
-              kubectl logs -n crossplane-system -l pkg.crossplane.io/provider=provider-garage --tail=50
-              echo ""
-              echo "=== Provider CR status ==="
-              kubectl get provider provider-garage -o yaml
-              exit 0
-            fi
-            
-            # Check for container errors
-            if echo "$CONTAINER_STATUS" | grep -q "waiting"; then
-              REASON=$(kubectl get pods -n crossplane-system -l pkg.crossplane.io/provider=provider-garage -o jsonpath='{.items[0].status.containerStatuses[0].state.waiting.reason}' 2>/dev/null || echo "Unknown")
-              echo "  Container waiting reason: $REASON"
-              
-              if [ "$REASON" = "CrashLoopBackOff" ] || [ "$REASON" = "Error" ]; then
-                echo ""
-                echo "=========================================="
-                echo "FAILURE: Container failed to start!"
-                echo "=========================================="
-                echo ""
-                echo "=== Pod events ==="
-                kubectl get events -n crossplane-system --field-selector involvedObject.kind=Pod --sort-by='.lastTimestamp' | tail -20
-                echo ""
-                echo "=== Pod describe ==="
-                kubectl describe pod -n crossplane-system -l pkg.crossplane.io/provider=provider-garage
-                echo ""
-                echo "=== Container logs ==="
-                kubectl logs -n crossplane-system -l pkg.crossplane.io/provider=provider-garage --previous 2>/dev/null || \
-                kubectl logs -n crossplane-system -l pkg.crossplane.io/provider=provider-garage 2>/dev/null || \
-                echo "No logs available"
-                exit 1
-              fi
-            fi
-            
-            sleep 5
-          done
-          
-          echo ""
-          echo "=========================================="
-          echo "TIMEOUT: Provider pod did not become ready"
-          echo "=========================================="
-          echo ""
-          echo "=== All pods in crossplane-system ==="
-          kubectl get pods -n crossplane-system -o wide
-          echo ""
-          echo "=== Provider status ==="
-          kubectl get provider provider-garage -o yaml
-          echo ""
-          echo "=== Events ==="
-          kubectl get events -n crossplane-system --sort-by='.lastTimestamp' | tail -30
-          exit 1
-
-      - name: Deploy Garage v2.1.0 for integration testing
-        run: |
-          set -euo pipefail
-          
-          # Create namespace for Garage
-          kubectl create namespace garage-system
-
-          # Generate a random RPC secret
-          export RPC_SECRET=$(openssl rand -hex 32)
-
-          # Create Garage configuration
-          cat <<CONFIGMAP_END | envsubst | kubectl apply -f -
-          apiVersion: v1
-          kind: ConfigMap
-          metadata:
-            name: garage-config
-            namespace: garage-system
-          data:
-            garage.toml: |
-              metadata_dir = "/data/meta"
-              data_dir = "/data/data"
-              db_engine = "sqlite"
-              replication_factor = 1
-              
-              [rpc]
-              bind_addr = "[::]:3901"
-              secret = "${RPC_SECRET}"
-              
-              [s3_api]
-              s3_region = "garage"
-              api_bind_addr = "[::]:3900"
-              root_domain = ".s3.garage.localhost"
-              
-              [s3_web]
-              bind_addr = "[::]:3902"
-              root_domain = ".web.garage.localhost"
-              
-              [admin]
-              api_bind_addr = "[::]:3903"
-              admin_token = "test-admin-token"
-          CONFIGMAP_END
-
-          # Deploy Garage v2.1.0 StatefulSet
-          cat <<EOF | kubectl apply -f -
-          apiVersion: apps/v1
-          kind: StatefulSet
-          metadata:
-            name: garage
-            namespace: garage-system
-          spec:
-            serviceName: garage
-            replicas: 1
-            selector:
-              matchLabels:
-                app: garage
-            template:
-              metadata:
-                labels:
-                  app: garage
-              spec:
-                containers:
-                - name: garage
-                  image: dxflrs/garage:v2.1.0
-                  ports:
-                  - containerPort: 3900
-                    name: s3
-                  - containerPort: 3901
-                    name: rpc
-                  - containerPort: 3902
-                    name: web
-                  - containerPort: 3903
-                    name: admin
-                  volumeMounts:
-                  - name: config
-                    mountPath: /etc/garage.toml
-                    subPath: garage.toml
-                  - name: data
-                    mountPath: /data
-                volumes:
-                - name: config
-                  configMap:
-                    name: garage-config
-                - name: data
-                  emptyDir: {}
-          ---
-          apiVersion: v1
-          kind: Service
-          metadata:
-            name: garage
-            namespace: garage-system
-          spec:
-            selector:
-              app: garage
-            ports:
-            - name: s3
-              port: 3900
-              targetPort: 3900
-            - name: rpc
-              port: 3901
-              targetPort: 3901
-            - name: web
-              port: 3902
-              targetPort: 3902
-            - name: admin
-              port: 3903
-              targetPort: 3903
-          EOF
-
-          # Wait for Garage to be ready (180s timeout for v2.1.0 which may pull a larger image)
-          kubectl rollout status statefulset/garage -n garage-system --timeout=180s
-
-          # Configure Garage cluster layout
-          echo "Configuring Garage cluster layout..."
-          sleep 5
-          NODE_ID_RAW=$(kubectl exec -n garage-system garage-0 -- /garage node id -q 2>&1)
-          if [ $? -ne 0 ]; then
-            echo "ERROR: Failed to execute garage node id command" >&2
-            echo "$NODE_ID_RAW"
-            kubectl logs -n garage-system garage-0 --tail=50
-            exit 1
-          fi
-          NODE_ID=$(echo "$NODE_ID_RAW" | cut -d@ -f1)
-          if [ -z "$NODE_ID" ]; then
-            echo "ERROR: Failed to get Garage node ID" >&2
-            kubectl logs -n garage-system garage-0 --tail=50
-            exit 1
-          fi
-          echo "Garage node ID: $NODE_ID"
-          kubectl exec -n garage-system garage-0 -- /garage layout assign -z dc1 -c 1G "$NODE_ID"
-          kubectl exec -n garage-system garage-0 -- /garage layout apply --version 1
-          echo "Garage v2.1.0 is ready!"
-
-      - name: Create ProviderConfig and test bucket provisioning
-        run: |
-          set -euo pipefail
-          
-          # Create secret with Garage credentials
-          cat <<EOF | kubectl apply -f -
-          apiVersion: v1
-          kind: Secret
-          metadata:
-            name: garage-creds
-            namespace: crossplane-system
-          type: Opaque
-          stringData:
-            credentials: |
-              {
-                "endpoint": "http://garage.garage-system.svc.cluster.local:3903",
-                "adminToken": "test-admin-token"
-              }
-          EOF
-
-          # Create ProviderConfig
-          cat <<EOF | kubectl apply -f -
-          apiVersion: garage.crossplane.io/v1beta1
-          kind: ProviderConfig
-          metadata:
-            name: default
-          spec:
-            credentials:
-              source: Secret
-              secretRef:
-                name: garage-creds
-                namespace: crossplane-system
-                key: credentials
-          EOF
-
-          # Create a test bucket
-          cat <<EOF | kubectl apply -f -
-          apiVersion: garage.crossplane.io/v1alpha1
-          kind: Bucket
-          metadata:
-            name: test-bucket
-            namespace: default
-          spec:
-            forProvider:
-              globalAlias: integration-test-bucket
-            providerConfigRef:
-              name: default
-          EOF
-
-          # Wait for bucket to be provisioned
-          echo "Waiting for bucket to be provisioned..."
-          for i in $(seq 1 60); do
-            STATUS=$(kubectl get bucket test-bucket -n default -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "Unknown")
-            SYNCED=$(kubectl get bucket test-bucket -n default -o jsonpath='{.status.conditions[?(@.type=="Synced")].status}' 2>/dev/null || echo "Unknown")
-            echo "Attempt $i: Ready=$STATUS, Synced=$SYNCED"
-            
-            if [ "$STATUS" = "True" ] && [ "$SYNCED" = "True" ]; then
-              echo ""
-              echo "=========================================="
-              echo "SUCCESS: Bucket provisioned successfully!"
-              echo "=========================================="
-              kubectl get bucket test-bucket -n default -o yaml
-              exit 0
-            fi
-            
-            sleep 5
-          done
-          
-          echo "Bucket provisioning timed out"
-          kubectl get bucket test-bucket -n default -o yaml
-          kubectl logs -n crossplane-system -l pkg.crossplane.io/provider=provider-garage --tail=100
-          exit 1
-
-      - name: Cleanup test resources
-        if: always()
-        run: |
-          kubectl delete bucket test-bucket -n default --ignore-not-found=true || true
-          kubectl delete provider provider-garage --ignore-not-found=true || true
-          kubectl delete providerconfig default --ignore-not-found=true || true
-          kubectl delete secret garage-creds -n crossplane-system --ignore-not-found=true || true
-          kubectl delete namespace garage-system --ignore-not-found=true || true
-          echo "Test resources cleaned up"
+      - name: Run Integration Tests
+        run: make test-integration
