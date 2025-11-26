@@ -1,28 +1,35 @@
+version: "2"
+
 linters:
   enable:
     - errcheck
-    - gosimple
     - govet
     - ineffassign
     - staticcheck
     - unused
-    - gofmt
-    - goimports
     - misspell
     - gocritic
-    - revive
     - unparam
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
 
 linters-settings:
   govet:
     enable:
       - shadow
+  errcheck:
+    exclude-functions:
+      - (io.Closer).Close
+      - (net/http.ResponseWriter).Write
+      - (*encoding/json.Encoder).Encode
+
+formatters-settings:
   goimports:
-    local-prefixes: github.com/kikokikok/provider-garage
-  revive:
-    rules:
-      - name: exported
-        disabled: true
+    local-prefixes:
+      - github.com/kikokikok/provider-garage
 
 issues:
   exclude-rules:
@@ -41,4 +48,6 @@ run:
   timeout: 5m
 
 output:
-  format: colored-line-number
+  formats:
+    text:
+      path: stdout
