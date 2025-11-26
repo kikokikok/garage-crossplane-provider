@@ -20,11 +20,6 @@ linters-settings:
   govet:
     enable:
       - shadow
-  errcheck:
-    exclude-functions:
-      - (io.Closer).Close
-      - (net/http.ResponseWriter).Write
-      - (*encoding/json.Encoder).Encode
 
 formatters-settings:
   goimports:
@@ -35,7 +30,6 @@ issues:
   exclude-rules:
     - path: _test\.go
       linters:
-        - errcheck
         - unparam
     - path: zz_generated\.deepcopy\.go
       linters:
