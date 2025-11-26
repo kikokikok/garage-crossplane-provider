@@ -10,6 +10,12 @@ metadata:
     meta.crossplane.io/description: |
       Crossplane provider for Garage object storage (S3-compatible).
       Supports bucket management and key creation for Garage deployments.
+    meta.crossplane.io/readme: |
+      Provider Garage is a Crossplane provider for managing Garage object
+      storage resources. It supports bucket management and access key creation
+      for Garage deployments.
 spec:
   controller:
     image: ghcr.io/kikokikok/garage-crossplane-provider:latest
+  crossplane:
+    version: ">=v1.12.1-0"
