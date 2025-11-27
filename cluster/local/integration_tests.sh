@@ -191,7 +191,7 @@ echo "Pushing xpkg to ttl.sh using crossplane xpkg push..."
 XPKG_FILE=$(find "${projectdir}/_output/xpkg" -name "${PACKAGE_NAME}-*.xpkg" 2>/dev/null | head -1)
 if [ -n "${XPKG_FILE}" ] && [ -f "${XPKG_FILE}" ]; then
   echo "Found xpkg file: ${XPKG_FILE}"
-  "${CROSSPLANE_CLI}" xpkg push "${XPKG_FILE}" "${XPKG_IMAGE}"
+  "${CROSSPLANE_CLI}" xpkg push -f "${XPKG_FILE}" "${XPKG_IMAGE}"
 else
   echo "ERROR: No xpkg file found in ${projectdir}/_output/xpkg"
   ls -la "${projectdir}/_output/xpkg" || true
