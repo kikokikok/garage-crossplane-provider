@@ -1,17 +1,15 @@
 linters:
   enable:
     - errcheck
-    - gosimple
     - govet
     - ineffassign
     - staticcheck
     - unused
-    - gofmt
-    - goimports
     - misspell
     - gocritic
-    - revive
     - unparam
+    - gofmt
+    - goimports
 
 linters-settings:
   govet:
@@ -19,16 +17,11 @@ linters-settings:
       - shadow
   goimports:
     local-prefixes: github.com/kikokikok/provider-garage
-  revive:
-    rules:
-      - name: exported
-        disabled: true
 
 issues:
   exclude-rules:
     - path: _test\.go
       linters:
-        - errcheck
         - unparam
     - path: zz_generated\.deepcopy\.go
       linters:
@@ -39,6 +32,3 @@ issues:
 
 run:
   timeout: 5m
-
-output:
-  format: colored-line-number

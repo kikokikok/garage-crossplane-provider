@@ -23,7 +23,7 @@ import (
 	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
 	"github.com/kikokikok/provider-garage/apis"
 	"github.com/kikokikok/provider-garage/apis/v1alpha1"
-	"github.com/kikokikok/provider-garage/apis/v1beta1"
+	v1 "github.com/kikokikok/provider-garage/apis/v1"
 )
 
 var (
@@ -101,12 +101,12 @@ var _ = Describe("Bucket Controller", func() {
 			Expect(k8sClient.Create(ctx, secret)).Should(Succeed())
 
 			// Create ProviderConfig
-			pc := &v1beta1.ProviderConfig{
+			pc := &v1.ProviderConfig{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-provider-config",
 				},
-				Spec: v1beta1.ProviderConfigSpec{
-					Credentials: v1beta1.ProviderCredentials{
+				Spec: v1.ProviderConfigSpec{
+					Credentials: v1.ProviderCredentials{
 						Source: "Secret",
 						CommonCredentialSelectors: xpv1.CommonCredentialSelectors{
 							SecretRef: &xpv1.SecretKeySelector{

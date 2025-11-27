@@ -75,7 +75,7 @@ func TestCreateBucket(t *testing.T) {
 
 				w.WriteHeader(tt.responseStatus)
 				if tt.responseStatus == http.StatusOK {
-					json.NewEncoder(w).Encode(tt.responseBody)
+					_ = json.NewEncoder(w).Encode(tt.responseBody)
 				}
 			}))
 			defer server.Close()
@@ -146,7 +146,7 @@ func TestGetBucket(t *testing.T) {
 
 				w.WriteHeader(tt.responseStatus)
 				if tt.responseStatus == http.StatusOK {
-					json.NewEncoder(w).Encode(tt.responseBody)
+					_ = json.NewEncoder(w).Encode(tt.responseBody)
 				}
 			}))
 			defer server.Close()
@@ -232,7 +232,7 @@ func TestCreateKey(t *testing.T) {
 			SecretAccessKey: "secret123",
 		}
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
@@ -265,7 +265,7 @@ func TestGrantKeyAccess(t *testing.T) {
 			GlobalAliases: []string{"test-bucket"},
 		}
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 

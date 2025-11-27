@@ -8,369 +8,316 @@ GRN='\033[0;32m'
 RED='\033[0;31m'
 NOC='\033[0m' # No Color
 
-echo_info() {
+echo_info(){
     printf "\n${BLU}%s${NOC}" "$1"
 }
-echo_step() {
+echo_step(){
     printf "\n${BLU}>>>>>>> %s${NOC}\n" "$1"
 }
-echo_sub_step() {
+echo_sub_step(){
     printf "\n${BLU}>>> %s${NOC}\n" "$1"
 }
-echo_step_completed() {
+
+echo_step_completed(){
     printf "${GRN} [✔]${NOC}"
 }
-echo_success() {
+
+echo_success(){
     printf "\n${GRN}%s${NOC}\n" "$1"
 }
-echo_warn() {
+echo_warn(){
     printf "\n${YLW}%s${NOC}" "$1"
 }
-echo_error() {
+echo_error(){
     printf "\n${RED}%s${NOC}" "$1"
     exit 1
 }
 
+
+# The name of your provider
+PACKAGE_NAME="provider-garage"
+
+
 # ------------------------------
 projectdir="$( cd "$( dirname "${BASH_SOURCE[0]}")"/../.. && pwd )"
-scriptdir="$(dirname "$0")"
+
+# get the build environment variables from the special build.vars target in the main makefile
+eval $(make --no-print-directory -C ${projectdir} build.vars)
 
 # ------------------------------
-# Configuration
-SAFEHOSTARCH="${SAFEHOSTARCH:-amd64}"
-KIND_VERSION="${KIND_VERSION:-v0.20.0}"
-KIND_NODE_IMAGE_TAG="${KIND_NODE_IMAGE_TAG:-v1.28.0}"
-HELM_VERSION="${HELM_VERSION:-v3.13.0}"
-KUBECTL="${KUBECTL:-kubectl}"
-KIND="${KIND:-kind}"
-HELM="${HELM:-helm}"
 
-K8S_CLUSTER="${K8S_CLUSTER:-provider-garage-inttests}"
-PACKAGE_NAME="provider-garage"
-GARAGE_ADMIN_TOKEN="test-admin-token"
+SAFEHOSTARCH="${SAFEHOSTARCH:-amd64}"
+BUILD_IMAGE="${BUILD_REGISTRY}/${PROJECT_NAME}-${SAFEHOSTARCH}"
+PACKAGE_IMAGE="crossplane.io/inttests/${PROJECT_NAME}:${VERSION}"
+# The controller image is the same as the build image (no -controller- suffix)
+CONTROLLER_IMAGE="${BUILD_REGISTRY}/${PROJECT_NAME}-${SAFEHOSTARCH}"
+
+version_tag="$(cat ${projectdir}/_output/version)"
+# tag as latest version to load into kind cluster
+# Use BUILD_REGISTRY since DOCKER_REGISTRY may be empty
+PACKAGE_CONTROLLER_IMAGE="${BUILD_REGISTRY}/${PROJECT_NAME}-controller:${VERSION}"
+K8S_CLUSTER="${K8S_CLUSTER:-${BUILD_REGISTRY}-inttests}"
+
+CROSSPLANE_NAMESPACE="crossplane-system"
 
 # cleanup on exit
 if [ "$skipcleanup" != true ]; then
   function cleanup {
     echo_step "Cleaning up..."
     export KUBECONFIG=
-    "${KIND}" delete cluster --name="${K8S_CLUSTER}" 2>/dev/null || true
+    "${KIND}" delete cluster --name="${K8S_CLUSTER}"
   }
+
   trap cleanup EXIT
 fi
 
-setup_cluster() {
-  echo_step "Creating Kind cluster ${K8S_CLUSTER}"
-  
-  local node_image="kindest/node:${KIND_NODE_IMAGE_TAG}"
-  "${KIND}" create cluster --name="${K8S_CLUSTER}" --wait=5m --image="${node_image}"
-  
-  echo_step "Creating crossplane-system namespace"
-  "${KUBECTL}" create ns crossplane-system
-}
+# setup package cache
+echo_step "setting up local package cache"
+CACHE_PATH="${projectdir}/.work/inttest-package-cache"
+mkdir -p "${CACHE_PATH}"
+echo "created cache dir at ${CACHE_PATH}"
 
-cleanup_cluster() {
-  "${KIND}" delete cluster --name="${K8S_CLUSTER}"
-}
+# Find the xpkg file from the build output
+XPKG_FILE=$(find "${projectdir}/_output/xpkg" -name "${PACKAGE_NAME}-*.xpkg" 2>/dev/null | head -1)
+if [ -n "${XPKG_FILE}" ] && [ -f "${XPKG_FILE}" ]; then
+  echo "Using pre-built xpkg: ${XPKG_FILE}"
+  cp "${XPKG_FILE}" "${CACHE_PATH}/${PACKAGE_NAME}.gz"
+  chmod 644 "${CACHE_PATH}/${PACKAGE_NAME}.gz"
+else
+  # Fallback: try to extract from docker image (legacy approach)
+  echo "No xpkg file found, trying to extract from docker image..."
+  docker tag "${BUILD_IMAGE}" "${PACKAGE_IMAGE}"
+  "${CROSSPLANE_CLI}" xpkg build --package-root "${projectdir}/package" --embed-runtime-image "${BUILD_IMAGE}" -o "${CACHE_PATH}/${PACKAGE_NAME}.gz" && chmod 644 "${CACHE_PATH}/${PACKAGE_NAME}.gz"
+fi
 
-setup_crossplane() {
-  echo_step "Installing Crossplane from stable channel"
-  
-  "${HELM}" repo add crossplane-stable https://charts.crossplane.io/stable/ --force-update
-  local chart_version="$("${HELM}" search repo crossplane-stable/crossplane | awk 'FNR == 2 {print $2}')"
-  echo_info "Using Crossplane version ${chart_version}"
-  echo
-  "${HELM}" install crossplane --namespace crossplane-system crossplane-stable/crossplane --version ${chart_version} --wait
-}
+# Determine the KIND node image tag
+# Use a sensible default if KIND_NODE_IMAGE_TAG is not set
+if [ -z "${KIND_NODE_IMAGE_TAG}" ]; then
+  # Get the latest supported k8s version for the current kind version
+  KIND_NODE_IMAGE_TAG="v1.32.2"
+  echo "KIND_NODE_IMAGE_TAG not set, using default: ${KIND_NODE_IMAGE_TAG}"
+fi
 
-build_and_load_provider() {
-  echo_step "Building provider binary"
-  cd "${projectdir}"
-  
-  # Build for the target platform
-  GOOS=linux GOARCH=${SAFEHOSTARCH} CGO_ENABLED=0 go build -o bin/linux_${SAFEHOSTARCH}/provider cmd/provider/main.go
-  
-  echo_step "Building provider Docker image"
-  docker build -f cluster/images/provider-garage/Dockerfile -t "xpkg.crossplane.io/${PACKAGE_NAME}:latest" .
-  
-  echo_step "Loading provider image into Kind cluster"
-  "${KIND}" load docker-image "xpkg.crossplane.io/${PACKAGE_NAME}:latest" --name="${K8S_CLUSTER}"
-}
+# create kind cluster with extra mounts
+KIND_NODE_IMAGE="kindest/node:${KIND_NODE_IMAGE_TAG}"
+echo_step "creating k8s cluster using kind ${KIND_VERSION} and node image ${KIND_NODE_IMAGE}"
+KIND_CONFIG="$( cat <<EOF
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  extraMounts:
+  - hostPath: "${CACHE_PATH}/"
+    containerPath: /cache
+EOF
+)"
+echo "${KIND_CONFIG}" | "${KIND}" create cluster --name="${K8S_CLUSTER}" --wait=5m --image="${KIND_NODE_IMAGE}" --config=-
 
-setup_provider() {
-  echo_step "Installing provider via Provider CRD"
-  
-  # Apply CRDs first
-  echo_step "Applying CRDs"
-  "${KUBECTL}" apply -f "${projectdir}/package/crds/"
-  
-  local yaml="$( cat <<EOF
-apiVersion: pkg.crossplane.io/v1beta1
-kind: DeploymentRuntimeConfig
+# tag controller image and load it into kind cluster
+docker tag "${CONTROLLER_IMAGE}" "${PACKAGE_CONTROLLER_IMAGE}"
+"${KIND}" load docker-image "${PACKAGE_CONTROLLER_IMAGE}" --name="${K8S_CLUSTER}"
+
+echo_step "create crossplane-system namespace"
+"${KUBECTL}" create ns crossplane-system
+
+# Fix permissions on the cache directory so Crossplane can write to it
+echo_step "fixing cache directory permissions"
+docker exec "${K8S_CLUSTER}-control-plane" chmod -R 777 /cache
+docker exec "${K8S_CLUSTER}-control-plane" ls -la /cache
+
+echo_step "create persistent volume and claim for mounting package-cache"
+PV_YAML="$( cat <<EOF
+apiVersion: v1
+kind: PersistentVolume
 metadata:
-  name: debug-config
+  name: package-cache
+  labels:
+    type: local
 spec:
-  deploymentTemplate:
-    spec:
-      selector: {}
-      template:
-        spec:
-          containers:
-            - name: package-runtime
-              args:
-                - --debug
----
+  storageClassName: manual
+  capacity:
+    storage: 5Mi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: "/cache"
+EOF
+)"
+echo "${PV_YAML}" | "${KUBECTL}" create -f -
+
+PVC_YAML="$( cat <<EOF
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: package-cache
+  namespace: crossplane-system
+spec:
+  accessModes:
+    - ReadWriteOnce
+  volumeName: package-cache
+  storageClassName: manual
+  resources:
+    requests:
+      storage: 1Mi
+EOF
+)"
+echo "${PVC_YAML}" | "${KUBECTL}" create -f -
+
+# install crossplane from stable channel
+echo_step "installing crossplane from stable channel"
+"${HELM}" repo add crossplane-stable https://charts.crossplane.io/stable/
+chart_version="$("${HELM}" search repo crossplane-stable/crossplane | awk 'FNR == 2 {print $2}')"
+echo_info "using crossplane version ${chart_version}"
+echo
+# we replace empty dir with our PVC so that the /cache dir in the kind node
+# container is exposed to the crossplane pod
+"${HELM}" install crossplane --namespace crossplane-system crossplane-stable/crossplane --version ${chart_version} --wait --set packageCache.pvc=package-cache
+
+# ----------- integration tests
+echo_step "--- INTEGRATION TESTS ---"
+
+# install package
+echo_step "installing ${PROJECT_NAME} into \"${CROSSPLANE_NAMESPACE}\" namespace"
+
+# Use ttl.sh as a temporary registry (images expire after 1 hour)
+# Generate a unique tag to avoid conflicts
+TTL_TAG="$(date +%s)-${RANDOM}"
+XPKG_IMAGE="ttl.sh/${PACKAGE_NAME}:1h-${TTL_TAG}"
+CONTROLLER_IMAGE_TTL="ttl.sh/${PACKAGE_NAME}-controller:1h-${TTL_TAG}"
+
+# First, push the controller image to ttl.sh (needed by the xpkg)
+echo "Pushing controller image to ttl.sh..."
+docker tag "${CONTROLLER_IMAGE}" "${CONTROLLER_IMAGE_TTL}"
+docker push "${CONTROLLER_IMAGE_TTL}"
+
+# Now push the xpkg to ttl.sh using crossplane CLI
+# The xpkg needs to be pushed as a Crossplane package, not a regular Docker image
+echo "Pushing xpkg to ttl.sh using crossplane xpkg push..."
+XPKG_FILE=$(find "${projectdir}/_output/xpkg" -name "${PACKAGE_NAME}-*.xpkg" 2>/dev/null | head -1)
+if [ -n "${XPKG_FILE}" ] && [ -f "${XPKG_FILE}" ]; then
+  echo "Found xpkg file: ${XPKG_FILE}"
+  "${CROSSPLANE_CLI}" xpkg push -f "${XPKG_FILE}" "${XPKG_IMAGE}"
+else
+  echo "ERROR: No xpkg file found in ${projectdir}/_output/xpkg"
+  ls -la "${projectdir}/_output/xpkg" || true
+  exit 1
+fi
+
+echo "Using package image: ${XPKG_IMAGE}"
+
+INSTALL_YAML="$( cat <<EOF
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:
   name: "${PACKAGE_NAME}"
 spec:
-  runtimeConfigRef:
-    name: debug-config
-  package: "xpkg.crossplane.io/${PACKAGE_NAME}:latest"
-  packagePullPolicy: Never
+  package: "${XPKG_IMAGE}"
 EOF
-  )"
-  
-  echo "${yaml}" | "${KUBECTL}" apply -f -
-  
-  echo_step "Waiting for provider to be installed and healthy"
-  "${KUBECTL}" wait "provider.pkg.crossplane.io/${PACKAGE_NAME}" --for=condition=healthy --timeout=120s
-  
-  echo_step "Checking provider pod status"
-  "${KUBECTL}" get pods -n crossplane-system -l pkg.crossplane.io/provider=${PACKAGE_NAME}
-  
-  echo_step "Provider logs"
-  "${KUBECTL}" logs -n crossplane-system -l pkg.crossplane.io/provider=${PACKAGE_NAME} --tail=50 || true
-}
+)"
 
-cleanup_provider() {
-  echo_step "Uninstalling provider"
-  "${KUBECTL}" delete provider.pkg.crossplane.io "${PACKAGE_NAME}" --ignore-not-found=true
-  "${KUBECTL}" delete deploymentruntimeconfig.pkg.crossplane.io debug-config --ignore-not-found=true
-  
-  echo_step "Waiting for provider pods to be deleted"
-  timeout=60
-  current=0
-  step=3
-  while [[ $(kubectl get providerrevision.pkg.crossplane.io -o name 2>/dev/null | wc -l | tr -d '[:space:]') != "0" ]]; do
-    echo "Waiting another $step seconds..."
-    current=$((current + step))
-    if [[ $current -ge $timeout ]]; then
-      echo_warn "Timeout of ${timeout}s reached, continuing anyway"
-      break
-    fi
-    sleep $step
-  done
-}
+echo "${INSTALL_YAML}" | "${KUBECTL}" apply -f -
 
-setup_garage() {
-  echo_step "Installing Garage v2.1.0"
-  
-  # Generate RPC secret
-  local rpc_secret=$(openssl rand -hex 32)
-  
-  # Create Garage configuration
-  cat <<EOF | "${KUBECTL}" apply -f -
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: garage-config
-  namespace: default
-data:
-  garage.toml: |
-    metadata_dir = "/data/meta"
-    data_dir = "/data/data"
-    db_engine = "sqlite"
-    replication_factor = 1
-    
-    [rpc]
-    bind_addr = "[::]:3901"
-    secret = "${rpc_secret}"
-    
-    [s3_api]
-    s3_region = "garage"
-    api_bind_addr = "[::]:3900"
-    root_domain = ".s3.garage.localhost"
-    
-    [s3_web]
-    bind_addr = "[::]:3902"
-    root_domain = ".web.garage.localhost"
-    
-    [admin]
-    api_bind_addr = "[::]:3903"
-    admin_token = "${GARAGE_ADMIN_TOKEN}"
-EOF
+# printing the cache dir contents can be useful for troubleshooting failures
+echo_step "check kind node cache dir contents"
+docker exec "${K8S_CLUSTER}-control-plane" ls -la /cache
 
-  # Deploy Garage StatefulSet
-  cat <<EOF | "${KUBECTL}" apply -f -
-apiVersion: apps/v1
-kind: StatefulSet
-metadata:
-  name: garage
-  namespace: default
-spec:
-  serviceName: garage
-  replicas: 1
-  selector:
-    matchLabels:
-      app: garage
-  template:
-    metadata:
-      labels:
-        app: garage
-    spec:
-      containers:
-      - name: garage
-        image: dxflrs/garage:v2.1.0
-        ports:
-        - containerPort: 3900
-          name: s3
-        - containerPort: 3901
-          name: rpc
-        - containerPort: 3902
-          name: web
-        - containerPort: 3903
-          name: admin
-        volumeMounts:
-        - name: config
-          mountPath: /etc/garage.toml
-          subPath: garage.toml
-        - name: data
-          mountPath: /data
-      volumes:
-      - name: config
-        configMap:
-          name: garage-config
-      - name: data
-        emptyDir: {}
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: garage
-  namespace: default
-spec:
-  selector:
-    app: garage
-  ports:
-  - name: s3
-    port: 3900
-    targetPort: 3900
-  - name: rpc
-    port: 3901
-    targetPort: 3901
-  - name: web
-    port: 3902
-    targetPort: 3902
-  - name: admin
-    port: 3903
-    targetPort: 3903
-EOF
+echo_step "waiting for provider to be installed"
 
-  echo_step "Waiting for Garage to be ready"
-  "${KUBECTL}" wait --for=create pod garage-0 --timeout=60s
-  "${KUBECTL}" wait --for=condition=ready pod -l app=garage --timeout=180s
+# Poll provider status every 10 seconds until healthy or timeout
+max_attempts=18  # 18 * 10s = 180s timeout
+attempt=0
+while [ $attempt -lt $max_attempts ]; do
+  attempt=$((attempt + 1))
+  echo ""
+  echo "===== Polling attempt $attempt/$max_attempts ====="
+  echo ""
   
-  echo_step "Configuring Garage cluster layout"
-  sleep 5  # Give Garage a moment to fully initialize
-  local node_id=$("${KUBECTL}" exec garage-0 -- /garage node id -q | cut -d@ -f1)
-  if [ -z "$node_id" ]; then
-    echo_error "Failed to get Garage node ID"
+  # Get provider status in a compact format
+  echo "--- Provider Status ---"
+  "${KUBECTL}" get provider "${PACKAGE_NAME}" -o jsonpath='{.status.conditions[*]}' 2>/dev/null | jq -r '.' 2>/dev/null || \
+  "${KUBECTL}" get provider "${PACKAGE_NAME}" -o yaml 2>/dev/null | grep -A20 "status:" || \
+  echo "Provider not found or no status yet"
+  
+  echo ""
+  echo "--- Provider Revision Status ---"
+  "${KUBECTL}" get providerrevision -o jsonpath='{range .items[*]}{.metadata.name}: {.status.conditions[*].type}={.status.conditions[*].status} {.status.conditions[*].reason}{"\n"}{end}' 2>/dev/null || \
+  "${KUBECTL}" get providerrevision 2>/dev/null || echo "No provider revisions yet"
+  
+  echo ""
+  echo "--- Pods in crossplane-system ---"
+  "${KUBECTL}" get pods -n crossplane-system -o wide 2>/dev/null || true
+  
+  echo ""
+  echo "--- Recent Events ---"
+  "${KUBECTL}" get events -n crossplane-system --sort-by='.lastTimestamp' 2>/dev/null | tail -10 || true
+  
+  # Check if provider is healthy
+  HEALTHY=$("${KUBECTL}" get provider "${PACKAGE_NAME}" -o jsonpath='{.status.conditions[?(@.type=="Healthy")].status}' 2>/dev/null)
+  INSTALLED=$("${KUBECTL}" get provider "${PACKAGE_NAME}" -o jsonpath='{.status.conditions[?(@.type=="Installed")].status}' 2>/dev/null)
+  
+  echo ""
+  echo "Provider Healthy: ${HEALTHY:-unknown}, Installed: ${INSTALLED:-unknown}"
+  
+  if [ "$HEALTHY" = "True" ] && [ "$INSTALLED" = "True" ]; then
+    echo "Provider is healthy and installed!"
+    break
   fi
-  echo_info "Garage node ID: $node_id"
-  echo
-  "${KUBECTL}" exec garage-0 -- /garage layout assign -z dc1 -c 1G "$node_id"
-  "${KUBECTL}" exec garage-0 -- /garage layout apply --version 1
   
-  echo_success "Garage v2.1.0 is ready!"
-}
+  # If not healthy, show more details on last attempt or every 3rd attempt
+  if [ $((attempt % 3)) -eq 0 ] || [ $attempt -eq $max_attempts ]; then
+    echo ""
+    echo "--- Detailed Crossplane Logs ---"
+    "${KUBECTL}" logs -n crossplane-system -l app=crossplane --tail=30 2>/dev/null || true
+    
+    echo ""
+    echo "--- Provider Pod Logs (if any) ---"
+    "${KUBECTL}" logs -n crossplane-system -l pkg.crossplane.io/provider="${PACKAGE_NAME}" --tail=20 2>/dev/null || true
+  fi
+  
+  if [ $attempt -lt $max_attempts ]; then
+    echo ""
+    echo "Waiting 10 seconds before next poll..."
+    sleep 10
+  fi
+done
 
-cleanup_garage() {
-  echo_step "Uninstalling Garage"
-  "${KUBECTL}" delete statefulset garage -n default --ignore-not-found=true
-  "${KUBECTL}" delete service garage -n default --ignore-not-found=true
-  "${KUBECTL}" delete configmap garage-config -n default --ignore-not-found=true
-}
+# Final check
+if [ "$HEALTHY" != "True" ] || [ "$INSTALLED" != "True" ]; then
+  echo ""
+  echo "===== FINAL DEBUG INFO ====="
+  echo "--- Full Provider YAML ---"
+  "${KUBECTL}" get provider "${PACKAGE_NAME}" -o yaml || true
+  echo ""
+  echo "--- Full ProviderRevision YAML ---"
+  "${KUBECTL}" get providerrevision -o yaml || true
+  echo ""
+  echo "--- Deployment Status ---"
+  "${KUBECTL}" get deployment -n crossplane-system || true
+  "${KUBECTL}" describe deployment -n crossplane-system -l pkg.crossplane.io/provider="${PACKAGE_NAME}" || true
+  echo ""
+  echo "--- All Events ---"
+  "${KUBECTL}" get events -n crossplane-system --sort-by='.lastTimestamp' || true
+  
+  echo ""
+  echo "Provider failed to become healthy within timeout"
+  exit 1
+fi
 
-setup_provider_config() {
-  echo_step "Creating ProviderConfig"
-  
-  # Create credentials secret
-  "${KUBECTL}" create secret generic garage-creds -n crossplane-system \
-    --from-literal=credentials="{\"endpoint\":\"http://garage.default.svc.cluster.local:3903\",\"adminToken\":\"${GARAGE_ADMIN_TOKEN}\"}"
-  
-  cat <<EOF | "${KUBECTL}" apply -f -
-apiVersion: garage.crossplane.io/v1beta1
-kind: ProviderConfig
-metadata:
-  name: default
-spec:
-  credentials:
-    source: Secret
-    secretRef:
-      name: garage-creds
-      namespace: crossplane-system
-      key: credentials
-EOF
-}
+echo_step "uninstalling ${PROJECT_NAME}"
 
-cleanup_provider_config() {
-  echo_step "Cleaning up ProviderConfig"
-  "${KUBECTL}" delete providerconfig.garage.crossplane.io default --ignore-not-found=true
-  "${KUBECTL}" delete secret garage-creds -n crossplane-system --ignore-not-found=true
-}
+echo "${INSTALL_YAML}" | "${KUBECTL}" delete -f -
 
-test_create_bucket() {
-  echo_step "Test creating Bucket resource"
-  
-  cat <<EOF | "${KUBECTL}" apply -f -
-apiVersion: garage.crossplane.io/v1alpha1
-kind: Bucket
-metadata:
-  name: test-bucket
-  namespace: default
-spec:
-  forProvider:
-    globalAlias: integration-test-bucket
-  providerConfigRef:
-    name: default
-EOF
-  
-  echo_info "Checking if bucket becomes ready"
-  "${KUBECTL}" wait --timeout 2m --for condition=Ready bucket.garage.crossplane.io/test-bucket -n default
-  echo_step_completed
-  
-  echo_info "Bucket status:"
-  "${KUBECTL}" get bucket.garage.crossplane.io/test-bucket -n default -o yaml
-}
+# check pods deleted
+timeout=60
+current=0
+step=3
+while [[ $(kubectl get providerrevision.pkg.crossplane.io -o name | wc -l) != "0" ]]; do
+  echo "waiting for provider to be deleted for another $step seconds"
+  current=$current+$step
+  if ! [[ $timeout > $current ]]; then
+    echo_error "timeout of ${timeout}s has been reached"
+  fi
+  sleep $step;
+done
 
-cleanup_test_resources() {
-  echo_step "Cleaning up test resources"
-  "${KUBECTL}" delete bucket.garage.crossplane.io test-bucket -n default --ignore-not-found=true
-}
-
-run_integration_tests() {
-  echo_step "=== STARTING INTEGRATION TESTS ==="
-  
-  setup_cluster
-  setup_crossplane
-  build_and_load_provider
-  setup_provider
-  setup_garage
-  setup_provider_config
-  
-  echo_step "=== RUNNING TESTS ==="
-  test_create_bucket
-  
-  echo_step "=== CLEANUP ==="
-  cleanup_test_resources
-  cleanup_provider_config
-  cleanup_garage
-  cleanup_provider
-  
-  echo_success "All integration tests passed!"
-}
-
-# Run the tests
-run_integration_tests
+echo_success "Integration tests succeeded!"
