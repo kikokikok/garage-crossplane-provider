@@ -180,31 +180,23 @@ TTL_TAG="$(date +%s)-${RANDOM}"
 XPKG_IMAGE="ttl.sh/${PACKAGE_NAME}:1h-${TTL_TAG}"
 CONTROLLER_IMAGE_TTL="ttl.sh/${PACKAGE_NAME}-controller:1h-${TTL_TAG}"
 
-# Push the xpkg to ttl.sh
-echo "Pushing xpkg to ttl.sh..."
-if [ -f "${CACHE_PATH}/${PACKAGE_NAME}.gz" ]; then
-  # Load the xpkg as a docker image first
-  gunzip -c "${CACHE_PATH}/${PACKAGE_NAME}.gz" > "${CACHE_PATH}/${PACKAGE_NAME}.tar" 2>/dev/null || cp "${CACHE_PATH}/${PACKAGE_NAME}.gz" "${CACHE_PATH}/${PACKAGE_NAME}.tar"
-  docker load -i "${CACHE_PATH}/${PACKAGE_NAME}.tar" 2>/dev/null || true
-  
-  # Find the loaded image and tag it for ttl.sh
-  LOADED_IMAGE=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep "${PACKAGE_NAME}" | head -1)
-  if [ -n "${LOADED_IMAGE}" ]; then
-    echo "Tagging ${LOADED_IMAGE} as ${XPKG_IMAGE}"
-    docker tag "${LOADED_IMAGE}" "${XPKG_IMAGE}"
-    echo "Pushing ${XPKG_IMAGE} to ttl.sh..."
-    docker push "${XPKG_IMAGE}"
-  fi
-fi
-
-# Also push the controller image to ttl.sh
+# First, push the controller image to ttl.sh (needed by the xpkg)
 echo "Pushing controller image to ttl.sh..."
 docker tag "${CONTROLLER_IMAGE}" "${CONTROLLER_IMAGE_TTL}"
 docker push "${CONTROLLER_IMAGE_TTL}"
 
-# Load images into kind as well (belt and suspenders)
-"${KIND}" load docker-image "${XPKG_IMAGE}" --name="${K8S_CLUSTER}" 2>/dev/null || true
-"${KIND}" load docker-image "${CONTROLLER_IMAGE_TTL}" --name="${K8S_CLUSTER}" 2>/dev/null || true
+# Now push the xpkg to ttl.sh using crossplane CLI
+# The xpkg needs to be pushed as a Crossplane package, not a regular Docker image
+echo "Pushing xpkg to ttl.sh using crossplane xpkg push..."
+XPKG_FILE=$(find "${projectdir}/_output/xpkg" -name "${PACKAGE_NAME}-*.xpkg" 2>/dev/null | head -1)
+if [ -n "${XPKG_FILE}" ] && [ -f "${XPKG_FILE}" ]; then
+  echo "Found xpkg file: ${XPKG_FILE}"
+  "${CROSSPLANE_CLI}" xpkg push "${XPKG_FILE}" "${XPKG_IMAGE}"
+else
+  echo "ERROR: No xpkg file found in ${projectdir}/_output/xpkg"
+  ls -la "${projectdir}/_output/xpkg" || true
+  exit 1
+fi
 
 echo "Using package image: ${XPKG_IMAGE}"
 
