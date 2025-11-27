@@ -105,9 +105,11 @@ jobs:
 
       - name: Create Crossplane package
         run: |
-          # Build the package using UP CLI
+          # Build the package using UP CLI with embedded controller image
+          # The --embed-runtime-image flag embeds the controller image into the xpkg
           up xpkg build \
             --package-root=package \
+            --embed-runtime-image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.get_version.outputs.VERSION }} \
             --name=provider-garage-${{ steps.get_version.outputs.VERSION }}.xpkg
 
       - name: Verify xpkg and move to repo root
@@ -227,12 +229,14 @@ jobs:
         env:
           UPBOUND_REPO: xpkg.upbound.io/${{ secrets.UPBOUND_ORG }}/provider-garage
           VERSION_TAG: ${{ steps.get_version.outputs.VERSION }}
+          CONTROLLER_IMAGE: ghcr.io/kikokikok/garage-crossplane-provider:${{ steps.get_version.outputs.VERSION }}
         run: |
           set -euo pipefail
           
-          # Build the package
+          # Build the package with embedded controller image
           up xpkg build \
             --package-root=package \
+            --embed-runtime-image=${CONTROLLER_IMAGE} \
             --name=provider-garage-${VERSION_TAG}.xpkg
           
           # Verify package exists in package/ directory and move to repo root
