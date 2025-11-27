@@ -227,17 +227,33 @@ docker exec "${K8S_CLUSTER}-control-plane" ls -la /cache
 echo_step "waiting for provider to be installed"
 
 # Wait a few seconds for the provider to start reconciling
-sleep 5
+sleep 10
 
 # Check provider status for debugging
-echo "Provider status:"
+echo "===== Provider status ====="
 "${KUBECTL}" get provider "${PACKAGE_NAME}" -o yaml || true
-echo "Provider revision status:"
+
+echo "===== Provider revision status ====="
 "${KUBECTL}" get providerrevision -o yaml || true
-echo "Crossplane pods:"
-"${KUBECTL}" get pods -n crossplane-system || true
-echo "Crossplane pod logs:"
-"${KUBECTL}" logs -n crossplane-system -l app=crossplane --tail=50 || true
+
+echo "===== All pods in crossplane-system ====="
+"${KUBECTL}" get pods -n crossplane-system -o wide || true
+
+echo "===== Provider pod describe (if exists) ====="
+"${KUBECTL}" describe pods -n crossplane-system -l pkg.crossplane.io/provider="${PACKAGE_NAME}" || true
+
+echo "===== Provider deployment status ====="
+"${KUBECTL}" get deployment -n crossplane-system || true
+"${KUBECTL}" describe deployment -n crossplane-system -l pkg.crossplane.io/provider="${PACKAGE_NAME}" || true
+
+echo "===== Events in crossplane-system ====="
+"${KUBECTL}" get events -n crossplane-system --sort-by='.lastTimestamp' || true
+
+echo "===== Crossplane core logs ====="
+"${KUBECTL}" logs -n crossplane-system -l app=crossplane --tail=100 || true
+
+echo "===== Provider pod logs (if any) ====="
+"${KUBECTL}" logs -n crossplane-system -l pkg.crossplane.io/provider="${PACKAGE_NAME}" --tail=50 || true
 
 kubectl wait "provider.pkg.crossplane.io/${PACKAGE_NAME}" --for=condition=healthy --timeout=180s
 
