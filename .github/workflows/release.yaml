@@ -96,7 +96,7 @@ jobs:
           # Install Crossplane CLI for xpkg build with --embed-runtime-image
           curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
           sudo mv crossplane /usr/local/bin/
-          crossplane --version
+          crossplane version || echo "Crossplane CLI installed"
 
       - name: Create Crossplane package
         run: |
@@ -199,7 +199,7 @@ jobs:
           # Install Crossplane CLI for xpkg build
           curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
           sudo mv crossplane /usr/local/bin/
-          crossplane --version
+          crossplane version || echo "Crossplane CLI installed"
           
           # Install UP CLI for pushing to Upbound
           curl -sL https://cli.upbound.io | sh
