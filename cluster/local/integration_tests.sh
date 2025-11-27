@@ -212,7 +212,7 @@ metadata:
   name: "${PACKAGE_NAME}"
 spec:
   package: "${XPKG_IMAGE}"
-  packagePullPolicy: Never
+  packagePullPolicy: IfNotPresent
 EOF
 )"
 
