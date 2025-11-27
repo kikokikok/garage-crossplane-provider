@@ -120,6 +120,11 @@ docker tag "${CONTROLLER_IMAGE}" "${PACKAGE_CONTROLLER_IMAGE}"
 echo_step "create crossplane-system namespace"
 "${KUBECTL}" create ns crossplane-system
 
+# Fix permissions on the cache directory so Crossplane can write to it
+echo_step "fixing cache directory permissions"
+docker exec "${K8S_CLUSTER}-control-plane" chmod -R 777 /cache
+docker exec "${K8S_CLUSTER}-control-plane" ls -la /cache
+
 echo_step "create persistent volume and claim for mounting package-cache"
 PV_YAML="$( cat <<EOF
 apiVersion: v1
