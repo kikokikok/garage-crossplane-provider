@@ -174,36 +174,39 @@ echo_step "--- INTEGRATION TESTS ---"
 # install package
 echo_step "installing ${PROJECT_NAME} into \"${CROSSPLANE_NAMESPACE}\" namespace"
 
-# For Crossplane 2.x, we need a fully qualified OCI image reference
-# Use a fake local registry format that satisfies the validation
-XPKG_IMAGE="local.xpkg/${PACKAGE_NAME}:${VERSION}"
+# Use ttl.sh as a temporary registry (images expire after 1 hour)
+# Generate a unique tag to avoid conflicts
+TTL_TAG="$(date +%s)-${RANDOM}"
+XPKG_IMAGE="ttl.sh/${PACKAGE_NAME}:1h-${TTL_TAG}"
+CONTROLLER_IMAGE_TTL="ttl.sh/${PACKAGE_NAME}-controller:1h-${TTL_TAG}"
 
-# Check if we can load the xpkg as a docker image
+# Push the xpkg to ttl.sh
+echo "Pushing xpkg to ttl.sh..."
 if [ -f "${CACHE_PATH}/${PACKAGE_NAME}.gz" ]; then
-  echo "Loading xpkg from ${CACHE_PATH}/${PACKAGE_NAME}.gz"
-  # The xpkg is an OCI tarball, load it and tag appropriately
+  # Load the xpkg as a docker image first
   gunzip -c "${CACHE_PATH}/${PACKAGE_NAME}.gz" > "${CACHE_PATH}/${PACKAGE_NAME}.tar" 2>/dev/null || cp "${CACHE_PATH}/${PACKAGE_NAME}.gz" "${CACHE_PATH}/${PACKAGE_NAME}.tar"
   docker load -i "${CACHE_PATH}/${PACKAGE_NAME}.tar" 2>/dev/null || true
   
-  # Find the loaded image and tag it with our expected name
+  # Find the loaded image and tag it for ttl.sh
   LOADED_IMAGE=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep "${PACKAGE_NAME}" | head -1)
   if [ -n "${LOADED_IMAGE}" ]; then
     echo "Tagging ${LOADED_IMAGE} as ${XPKG_IMAGE}"
     docker tag "${LOADED_IMAGE}" "${XPKG_IMAGE}"
+    echo "Pushing ${XPKG_IMAGE} to ttl.sh..."
+    docker push "${XPKG_IMAGE}"
   fi
 fi
 
-# Verify the image exists before loading into kind
-echo "Verifying ${XPKG_IMAGE} exists in docker..."
-docker images "${XPKG_IMAGE}"
+# Also push the controller image to ttl.sh
+echo "Pushing controller image to ttl.sh..."
+docker tag "${CONTROLLER_IMAGE}" "${CONTROLLER_IMAGE_TTL}"
+docker push "${CONTROLLER_IMAGE_TTL}"
 
-# Load the xpkg image into kind
-echo "Loading ${XPKG_IMAGE} into kind cluster ${K8S_CLUSTER}..."
-"${KIND}" load docker-image "${XPKG_IMAGE}" --name="${K8S_CLUSTER}"
+# Load images into kind as well (belt and suspenders)
+"${KIND}" load docker-image "${XPKG_IMAGE}" --name="${K8S_CLUSTER}" 2>/dev/null || true
+"${KIND}" load docker-image "${CONTROLLER_IMAGE_TTL}" --name="${K8S_CLUSTER}" 2>/dev/null || true
 
-# Verify the image is available in the kind node
-echo "Verifying image is loaded in kind node..."
-docker exec "${K8S_CLUSTER}-control-plane" crictl images | grep -E "${PACKAGE_NAME}|local.xpkg" || echo "Warning: Image may not be visible via crictl"
+echo "Using package image: ${XPKG_IMAGE}"
 
 INSTALL_YAML="$( cat <<EOF
 apiVersion: pkg.crossplane.io/v1
@@ -212,7 +215,6 @@ metadata:
   name: "${PACKAGE_NAME}"
 spec:
   package: "${XPKG_IMAGE}"
-  packagePullPolicy: IfNotPresent
 EOF
 )"
 
