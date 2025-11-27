@@ -233,6 +233,22 @@ jobs:
           # builds by default. Specifying --load does so.
           BUILD_ARGS: "--load"
 
+      - name: Save Docker Images
+        run: |
+          # Get the BUILD_REGISTRY from make
+          eval $(make --no-print-directory build.vars)
+          mkdir -p _output/images
+          # Save BUILD_REGISTRY to file for use in integration test
+          echo "${BUILD_REGISTRY}" > _output/build_registry
+          # Save all images with the build registry prefix
+          for img in $(docker images --format '{{.Repository}}:{{.Tag}}' | grep "^${BUILD_REGISTRY}/"); do
+            filename=$(echo "$img" | tr '/:' '_')
+            echo "Saving $img to _output/images/${filename}.tar"
+            docker save "$img" -o "_output/images/${filename}.tar"
+          done
+          # List saved images for debugging
+          ls -la _output/images/
+
       - name: Publish Artifacts to GitHub
         uses: actions/upload-artifact@v4
         with:
@@ -288,12 +304,27 @@ jobs:
       - name: Load Docker Images
         run: |
           # Load docker images from the build artifacts
-          for img in _output/images/linux_*/*.tar.gz; do
+          for img in _output/images/*.tar; do
             if [ -f "$img" ]; then
               echo "Loading image from $img"
               docker load -i "$img"
             fi
           done
+          # Re-tag images with the current BUILD_REGISTRY if different from original
+          if [ -f "_output/build_registry" ]; then
+            ORIGINAL_REGISTRY=$(cat _output/build_registry)
+            eval $(make --no-print-directory build.vars)
+            if [ "${ORIGINAL_REGISTRY}" != "${BUILD_REGISTRY}" ]; then
+              echo "Re-tagging images from ${ORIGINAL_REGISTRY} to ${BUILD_REGISTRY}"
+              for img in $(docker images --format '{{.Repository}}:{{.Tag}}' | grep "^${ORIGINAL_REGISTRY}/"); do
+                new_img=$(echo "$img" | sed "s|^${ORIGINAL_REGISTRY}/|${BUILD_REGISTRY}/|")
+                echo "Tagging $img as $new_img"
+                docker tag "$img" "$new_img"
+              done
+            fi
+          fi
+          # List loaded images for debugging
+          docker images
 
       - name: Run Integration Tests
         run: make test-integration
