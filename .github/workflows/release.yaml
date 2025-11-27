@@ -91,12 +91,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           file: Dockerfile
 
-      - name: Pull Docker image for xpkg embedding
-        run: |
-          # Pull the image we just pushed so it's available locally for xpkg build
-          # Use the version from docker metadata which strips the 'v' prefix
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
-
       - name: Install Crossplane CLI
         run: |
           # Install Crossplane CLI for xpkg build with --embed-runtime-image
@@ -104,14 +98,43 @@ jobs:
           sudo mv crossplane /usr/local/bin/
           crossplane version || echo "Crossplane CLI installed"
 
-      - name: Create Crossplane package
+      - name: Create multi-arch Crossplane package
+        env:
+          IMAGE_TAG: ${{ steps.meta.outputs.version }}
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
         run: |
-          # Build the package using Crossplane CLI with embedded controller image
-          # The --embed-runtime-image flag embeds the controller image into the xpkg
+          set -euo pipefail
+          
+          # Pull and save images for each architecture as tarballs
+          echo "Pulling and saving amd64 image..."
+          docker pull --platform linux/amd64 ${IMAGE_REF}:${IMAGE_TAG}
+          docker save ${IMAGE_REF}:${IMAGE_TAG} -o /tmp/runtime-amd64.tar
+          
+          echo "Pulling and saving arm64 image..."
+          docker pull --platform linux/arm64 ${IMAGE_REF}:${IMAGE_TAG}
+          docker save ${IMAGE_REF}:${IMAGE_TAG} -o /tmp/runtime-arm64.tar
+          
+          # Build xpkg for each architecture
+          echo "Building amd64 xpkg..."
           crossplane xpkg build \
             --package-root=package \
-            --embed-runtime-image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }} \
-            --package-file=package/provider-garage-${{ steps.get_version.outputs.VERSION }}.xpkg
+            --embed-runtime-image-tarball=/tmp/runtime-amd64.tar \
+            --package-file=/tmp/provider-garage-amd64.xpkg
+          
+          echo "Building arm64 xpkg..."
+          crossplane xpkg build \
+            --package-root=package \
+            --embed-runtime-image-tarball=/tmp/runtime-arm64.tar \
+            --package-file=/tmp/provider-garage-arm64.xpkg
+          
+          # Push multi-arch xpkg using crossplane xpkg push with multiple files
+          echo "Pushing multi-arch xpkg to GHCR..."
+          crossplane xpkg push \
+            --package-files=/tmp/provider-garage-amd64.xpkg,/tmp/provider-garage-arm64.xpkg \
+            ${IMAGE_REF}:${{ steps.get_version.outputs.VERSION }}
+          
+          # Also copy one for GitHub release artifact
+          cp /tmp/provider-garage-amd64.xpkg package/provider-garage-${{ steps.get_version.outputs.VERSION }}.xpkg
 
       - name: Verify xpkg and move to repo root
         run: |
@@ -232,48 +255,44 @@ jobs:
           # Login using the token directly (preferred)
           up login --token "${UP_TOKEN}"
 
-      - name: Pull Docker image for xpkg embedding
-        run: |
-          # Pull the image so it's available locally for xpkg build
-          # Docker image tags use DOCKER_TAG (without 'v' prefix)
-          docker pull ghcr.io/kikokikok/garage-crossplane-provider:${{ steps.get_version.outputs.DOCKER_TAG }}
-
-      - name: Build and push to Upbound
+      - name: Build and push multi-arch xpkg to Upbound
         env:
           UPBOUND_REPO: xpkg.upbound.io/${{ secrets.UPBOUND_ORG }}/provider-garage
           VERSION_TAG: ${{ steps.get_version.outputs.VERSION }}
-          CONTROLLER_IMAGE: ghcr.io/kikokikok/garage-crossplane-provider:${{ steps.get_version.outputs.DOCKER_TAG }}
+          DOCKER_TAG: ${{ steps.get_version.outputs.DOCKER_TAG }}
+          IMAGE_REF: ghcr.io/kikokikok/garage-crossplane-provider
         run: |
           set -euo pipefail
           
-          # Build the package with embedded controller image using Crossplane CLI
+          # Pull and save images for each architecture as tarballs
+          echo "Pulling and saving amd64 image..."
+          docker pull --platform linux/amd64 ${IMAGE_REF}:${DOCKER_TAG}
+          docker save ${IMAGE_REF}:${DOCKER_TAG} -o /tmp/runtime-amd64.tar
+          
+          echo "Pulling and saving arm64 image..."
+          docker pull --platform linux/arm64 ${IMAGE_REF}:${DOCKER_TAG}
+          docker save ${IMAGE_REF}:${DOCKER_TAG} -o /tmp/runtime-arm64.tar
+          
+          # Build xpkg for each architecture
+          echo "Building amd64 xpkg..."
           crossplane xpkg build \
             --package-root=package \
-            --embed-runtime-image=${CONTROLLER_IMAGE} \
-            --package-file=package/provider-garage-${VERSION_TAG}.xpkg
+            --embed-runtime-image-tarball=/tmp/runtime-amd64.tar \
+            --package-file=/tmp/provider-garage-amd64.xpkg
           
-          # Verify package exists
-          XPkg="package/provider-garage-${VERSION_TAG}.xpkg"
-          echo "Looking for xpkg at: $XPkg"
+          echo "Building arm64 xpkg..."
+          crossplane xpkg build \
+            --package-root=package \
+            --embed-runtime-image-tarball=/tmp/runtime-arm64.tar \
+            --package-file=/tmp/provider-garage-arm64.xpkg
           
-          if [ ! -f "$XPkg" ]; then
-            echo "ERROR: xpkg not found: $XPkg" >&2
-            echo "Working directory: $(pwd)" >&2
-            echo "Listing package/ and repo root for debugging:" >&2
-            ls -la package || true
-            ls -la . || true
-            exit 1
-          fi
-          
-          mv "$XPkg" .
-          echo "Moved $XPkg to $(pwd)/"
-          
-          # Push with version tag using UP CLI
+          # Push multi-arch xpkg to Upbound using UP CLI
+          echo "Pushing multi-arch xpkg to Upbound..."
           up xpkg push ${UPBOUND_REPO}:${VERSION_TAG} \
-            -f provider-garage-${VERSION_TAG}.xpkg
+            -f /tmp/provider-garage-amd64.xpkg,/tmp/provider-garage-arm64.xpkg
           
           # Also push as latest if this is not a pre-release
           if [[ ! "${VERSION_TAG}" =~ (alpha|beta|rc) ]]; then
             up xpkg push ${UPBOUND_REPO}:latest \
-              -f provider-garage-${VERSION_TAG}.xpkg
+              -f /tmp/provider-garage-amd64.xpkg,/tmp/provider-garage-arm64.xpkg
           fi
