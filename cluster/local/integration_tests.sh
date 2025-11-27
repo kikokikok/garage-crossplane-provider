@@ -175,8 +175,8 @@ echo_step "--- INTEGRATION TESTS ---"
 echo_step "installing ${PROJECT_NAME} into \"${CROSSPLANE_NAMESPACE}\" namespace"
 
 # For Crossplane 2.x, we need a fully qualified OCI image reference
-# The xpkg file is an OCI image, so we can load it as a docker image
-XPKG_IMAGE="${BUILD_REGISTRY}/${PACKAGE_NAME}:${VERSION}"
+# Use a fake local registry format that satisfies the validation
+XPKG_IMAGE="local.xpkg/${PACKAGE_NAME}:${VERSION}"
 
 # Check if we can load the xpkg as a docker image
 if [ -f "${CACHE_PATH}/${PACKAGE_NAME}.gz" ]; then
@@ -184,9 +184,13 @@ if [ -f "${CACHE_PATH}/${PACKAGE_NAME}.gz" ]; then
   # The xpkg is an OCI tarball, load it and tag appropriately
   gunzip -c "${CACHE_PATH}/${PACKAGE_NAME}.gz" > "${CACHE_PATH}/${PACKAGE_NAME}.tar" 2>/dev/null || cp "${CACHE_PATH}/${PACKAGE_NAME}.gz" "${CACHE_PATH}/${PACKAGE_NAME}.tar"
   docker load -i "${CACHE_PATH}/${PACKAGE_NAME}.tar" 2>/dev/null || true
-  # Tag it with our expected name
-  docker tag "${BUILD_REGISTRY}/${PACKAGE_NAME}-${SAFEHOSTARCH}:latest" "${XPKG_IMAGE}" 2>/dev/null || \
-  docker tag "${BUILD_REGISTRY}/${PACKAGE_NAME}-amd64:latest" "${XPKG_IMAGE}" 2>/dev/null || true
+  
+  # Find the loaded image and tag it with our expected name
+  LOADED_IMAGE=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep "${PACKAGE_NAME}" | head -1)
+  if [ -n "${LOADED_IMAGE}" ]; then
+    echo "Tagging ${LOADED_IMAGE} as ${XPKG_IMAGE}"
+    docker tag "${LOADED_IMAGE}" "${XPKG_IMAGE}"
+  fi
 fi
 
 # Load the xpkg image into kind
