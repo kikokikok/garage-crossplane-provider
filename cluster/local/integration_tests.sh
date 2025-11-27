@@ -226,36 +226,85 @@ docker exec "${K8S_CLUSTER}-control-plane" ls -la /cache
 
 echo_step "waiting for provider to be installed"
 
-# Wait a few seconds for the provider to start reconciling
-sleep 10
+# Poll provider status every 10 seconds until healthy or timeout
+max_attempts=18  # 18 * 10s = 180s timeout
+attempt=0
+while [ $attempt -lt $max_attempts ]; do
+  attempt=$((attempt + 1))
+  echo ""
+  echo "===== Polling attempt $attempt/$max_attempts ====="
+  echo ""
+  
+  # Get provider status in a compact format
+  echo "--- Provider Status ---"
+  "${KUBECTL}" get provider "${PACKAGE_NAME}" -o jsonpath='{.status.conditions[*]}' 2>/dev/null | jq -r '.' 2>/dev/null || \
+  "${KUBECTL}" get provider "${PACKAGE_NAME}" -o yaml 2>/dev/null | grep -A20 "status:" || \
+  echo "Provider not found or no status yet"
+  
+  echo ""
+  echo "--- Provider Revision Status ---"
+  "${KUBECTL}" get providerrevision -o jsonpath='{range .items[*]}{.metadata.name}: {.status.conditions[*].type}={.status.conditions[*].status} {.status.conditions[*].reason}{"\n"}{end}' 2>/dev/null || \
+  "${KUBECTL}" get providerrevision 2>/dev/null || echo "No provider revisions yet"
+  
+  echo ""
+  echo "--- Pods in crossplane-system ---"
+  "${KUBECTL}" get pods -n crossplane-system -o wide 2>/dev/null || true
+  
+  echo ""
+  echo "--- Recent Events ---"
+  "${KUBECTL}" get events -n crossplane-system --sort-by='.lastTimestamp' 2>/dev/null | tail -10 || true
+  
+  # Check if provider is healthy
+  HEALTHY=$("${KUBECTL}" get provider "${PACKAGE_NAME}" -o jsonpath='{.status.conditions[?(@.type=="Healthy")].status}' 2>/dev/null)
+  INSTALLED=$("${KUBECTL}" get provider "${PACKAGE_NAME}" -o jsonpath='{.status.conditions[?(@.type=="Installed")].status}' 2>/dev/null)
+  
+  echo ""
+  echo "Provider Healthy: ${HEALTHY:-unknown}, Installed: ${INSTALLED:-unknown}"
+  
+  if [ "$HEALTHY" = "True" ] && [ "$INSTALLED" = "True" ]; then
+    echo "Provider is healthy and installed!"
+    break
+  fi
+  
+  # If not healthy, show more details on last attempt or every 3rd attempt
+  if [ $((attempt % 3)) -eq 0 ] || [ $attempt -eq $max_attempts ]; then
+    echo ""
+    echo "--- Detailed Crossplane Logs ---"
+    "${KUBECTL}" logs -n crossplane-system -l app=crossplane --tail=30 2>/dev/null || true
+    
+    echo ""
+    echo "--- Provider Pod Logs (if any) ---"
+    "${KUBECTL}" logs -n crossplane-system -l pkg.crossplane.io/provider="${PACKAGE_NAME}" --tail=20 2>/dev/null || true
+  fi
+  
+  if [ $attempt -lt $max_attempts ]; then
+    echo ""
+    echo "Waiting 10 seconds before next poll..."
+    sleep 10
+  fi
+done
 
-# Check provider status for debugging
-echo "===== Provider status ====="
-"${KUBECTL}" get provider "${PACKAGE_NAME}" -o yaml || true
-
-echo "===== Provider revision status ====="
-"${KUBECTL}" get providerrevision -o yaml || true
-
-echo "===== All pods in crossplane-system ====="
-"${KUBECTL}" get pods -n crossplane-system -o wide || true
-
-echo "===== Provider pod describe (if exists) ====="
-"${KUBECTL}" describe pods -n crossplane-system -l pkg.crossplane.io/provider="${PACKAGE_NAME}" || true
-
-echo "===== Provider deployment status ====="
-"${KUBECTL}" get deployment -n crossplane-system || true
-"${KUBECTL}" describe deployment -n crossplane-system -l pkg.crossplane.io/provider="${PACKAGE_NAME}" || true
-
-echo "===== Events in crossplane-system ====="
-"${KUBECTL}" get events -n crossplane-system --sort-by='.lastTimestamp' || true
-
-echo "===== Crossplane core logs ====="
-"${KUBECTL}" logs -n crossplane-system -l app=crossplane --tail=100 || true
-
-echo "===== Provider pod logs (if any) ====="
-"${KUBECTL}" logs -n crossplane-system -l pkg.crossplane.io/provider="${PACKAGE_NAME}" --tail=50 || true
-
-kubectl wait "provider.pkg.crossplane.io/${PACKAGE_NAME}" --for=condition=healthy --timeout=180s
+# Final check
+if [ "$HEALTHY" != "True" ] || [ "$INSTALLED" != "True" ]; then
+  echo ""
+  echo "===== FINAL DEBUG INFO ====="
+  echo "--- Full Provider YAML ---"
+  "${KUBECTL}" get provider "${PACKAGE_NAME}" -o yaml || true
+  echo ""
+  echo "--- Full ProviderRevision YAML ---"
+  "${KUBECTL}" get providerrevision -o yaml || true
+  echo ""
+  echo "--- Deployment Status ---"
+  "${KUBECTL}" get deployment -n crossplane-system || true
+  "${KUBECTL}" describe deployment -n crossplane-system -l pkg.crossplane.io/provider="${PACKAGE_NAME}" || true
+  echo ""
+  echo "--- All Events ---"
+  "${KUBECTL}" get events -n crossplane-system --sort-by='.lastTimestamp' || true
+  
+  echo ""
+  echo "Provider failed to become healthy within timeout"
+  exit 1
+fi
 
 echo_step "uninstalling ${PROJECT_NAME}"
 
