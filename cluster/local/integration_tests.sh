@@ -75,8 +75,27 @@ echo_step "setting up local package cache"
 CACHE_PATH="${projectdir}/.work/inttest-package-cache"
 mkdir -p "${CACHE_PATH}"
 echo "created cache dir at ${CACHE_PATH}"
-docker tag "${BUILD_IMAGE}" "${PACKAGE_IMAGE}"
-"${CROSSPLANE_CLI}" xpkg extract --from-daemon "${PACKAGE_IMAGE}" -o "${CACHE_PATH}/${PACKAGE_NAME}.gz" && chmod 644 "${CACHE_PATH}/${PACKAGE_NAME}.gz"
+
+# Find the xpkg file from the build output
+XPKG_FILE=$(find "${projectdir}/_output/xpkg" -name "${PACKAGE_NAME}-*.xpkg" 2>/dev/null | head -1)
+if [ -n "${XPKG_FILE}" ] && [ -f "${XPKG_FILE}" ]; then
+  echo "Using pre-built xpkg: ${XPKG_FILE}"
+  cp "${XPKG_FILE}" "${CACHE_PATH}/${PACKAGE_NAME}.gz"
+  chmod 644 "${CACHE_PATH}/${PACKAGE_NAME}.gz"
+else
+  # Fallback: try to extract from docker image (legacy approach)
+  echo "No xpkg file found, trying to extract from docker image..."
+  docker tag "${BUILD_IMAGE}" "${PACKAGE_IMAGE}"
+  "${CROSSPLANE_CLI}" xpkg build --package-root "${projectdir}/package" --embed-runtime-image "${BUILD_IMAGE}" -o "${CACHE_PATH}/${PACKAGE_NAME}.gz" && chmod 644 "${CACHE_PATH}/${PACKAGE_NAME}.gz"
+fi
+
+# Determine the KIND node image tag
+# Use a sensible default if KIND_NODE_IMAGE_TAG is not set
+if [ -z "${KIND_NODE_IMAGE_TAG}" ]; then
+  # Get the latest supported k8s version for the current kind version
+  KIND_NODE_IMAGE_TAG="v1.32.2"
+  echo "KIND_NODE_IMAGE_TAG not set, using default: ${KIND_NODE_IMAGE_TAG}"
+fi
 
 # create kind cluster with extra mounts
 KIND_NODE_IMAGE="kindest/node:${KIND_NODE_IMAGE_TAG}"
