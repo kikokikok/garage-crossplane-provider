@@ -17,8 +17,8 @@ import (
 	"github.com/crossplane/crossplane-runtime/pkg/reconciler/managed"
 	"github.com/crossplane/crossplane-runtime/pkg/resource"
 
-	"github.com/kikokikok/provider-garage/apis/v1alpha1"
 	v1 "github.com/kikokikok/provider-garage/apis/v1"
+	"github.com/kikokikok/provider-garage/apis/v1alpha1"
 	"github.com/kikokikok/provider-garage/pkg/garage"
 )
 
@@ -155,17 +155,21 @@ func (e *external) Update(ctx context.Context, mg resource.Managed) (managed.Ext
 	return managed.ExternalUpdate{}, nil
 }
 
-func (e *external) Delete(ctx context.Context, mg resource.Managed) error {
+func (e *external) Delete(ctx context.Context, mg resource.Managed) (managed.ExternalDelete, error) {
 	cr, ok := mg.(*v1alpha1.Bucket)
 	if !ok {
-		return errors.New(errNotBucket)
+		return managed.ExternalDelete{}, errors.New(errNotBucket)
 	}
 
 	cr.SetConditions(xpv1.Deleting())
 
 	if cr.Status.AtProvider.ID == "" {
-		return nil
+		return managed.ExternalDelete{}, nil
 	}
 
-	return errors.Wrap(e.client.DeleteBucket(ctx, cr.Status.AtProvider.ID), errDeleteBucket)
+	return managed.ExternalDelete{}, errors.Wrap(e.client.DeleteBucket(ctx, cr.Status.AtProvider.ID), errDeleteBucket)
+}
+
+func (e *external) Disconnect(ctx context.Context) error {
+	return nil
 }

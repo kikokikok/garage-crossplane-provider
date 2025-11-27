@@ -109,19 +109,23 @@ func (e *mockExternal) Update(ctx context.Context, mg resource.Managed) (managed
 	return managed.ExternalUpdate{}, nil
 }
 
-func (e *mockExternal) Delete(ctx context.Context, mg resource.Managed) error {
+func (e *mockExternal) Delete(ctx context.Context, mg resource.Managed) (managed.ExternalDelete, error) {
 	cr, ok := mg.(*v1alpha1.Bucket)
 	if !ok {
-		return errors.New(errNotBucket)
+		return managed.ExternalDelete{}, errors.New(errNotBucket)
 	}
 
 	cr.SetConditions(xpv1.Deleting())
 
 	if cr.Status.AtProvider.ID == "" {
-		return nil
+		return managed.ExternalDelete{}, nil
 	}
 
-	return errors.Wrap(e.client.DeleteBucket(ctx, cr.Status.AtProvider.ID), errDeleteBucket)
+	return managed.ExternalDelete{}, errors.Wrap(e.client.DeleteBucket(ctx, cr.Status.AtProvider.ID), errDeleteBucket)
+}
+
+func (e *mockExternal) Disconnect(ctx context.Context) error {
+	return nil
 }
 
 func TestObserve(t *testing.T) {
@@ -334,6 +338,7 @@ func TestDelete(t *testing.T) {
 	}
 
 	type want struct {
+		o   managed.ExternalDelete
 		err error
 	}
 
@@ -362,6 +367,7 @@ func TestDelete(t *testing.T) {
 				},
 			},
 			want: want{
+				o:   managed.ExternalDelete{},
 				err: nil,
 			},
 		},
@@ -380,6 +386,7 @@ func TestDelete(t *testing.T) {
 				},
 			},
 			want: want{
+				o:   managed.ExternalDelete{},
 				err: nil,
 			},
 		},
@@ -402,6 +409,7 @@ func TestDelete(t *testing.T) {
 				},
 			},
 			want: want{
+				o:   managed.ExternalDelete{},
 				err: errors.Wrap(errors.New("delete failed"), errDeleteBucket),
 			},
 		},
@@ -410,10 +418,13 @@ func TestDelete(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			e := &mockExternal{client: tc.fields.client}
-			err := e.Delete(context.Background(), tc.args.mg)
+			got, err := e.Delete(context.Background(), tc.args.mg)
 
 			if diff := cmp.Diff(tc.want.err, err, test.EquateErrors()); diff != "" {
 				t.Errorf("\n%s\ne.Delete(...): -want error, +got error:\n%s\n", tc.reason, diff)
+			}
+			if diff := cmp.Diff(tc.want.o, got); diff != "" {
+				t.Errorf("\n%s\ne.Delete(...): -want, +got:\n%s\n", tc.reason, diff)
 			}
 		})
 	}
