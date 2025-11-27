@@ -10,9 +10,6 @@ linters:
     - misspell
     - gocritic
     - unparam
-
-formatters:
-  enable:
     - gofmt
     - goimports
 
@@ -20,11 +17,8 @@ linters-settings:
   govet:
     enable:
       - shadow
-
-formatters-settings:
   goimports:
-    local-prefixes:
-      - github.com/kikokikok/provider-garage
+    local-prefixes: github.com/kikokikok/provider-garage
 
 issues:
   exclude-rules:
@@ -43,5 +37,4 @@ run:
 
 output:
   formats:
-    text:
-      path: stdout
+    - format: colored-line-number
