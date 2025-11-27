@@ -193,8 +193,17 @@ if [ -f "${CACHE_PATH}/${PACKAGE_NAME}.gz" ]; then
   fi
 fi
 
+# Verify the image exists before loading into kind
+echo "Verifying ${XPKG_IMAGE} exists in docker..."
+docker images "${XPKG_IMAGE}"
+
 # Load the xpkg image into kind
-"${KIND}" load docker-image "${XPKG_IMAGE}" --name="${K8S_CLUSTER}" 2>/dev/null || echo "Note: xpkg image may already be loaded via controller image"
+echo "Loading ${XPKG_IMAGE} into kind cluster ${K8S_CLUSTER}..."
+"${KIND}" load docker-image "${XPKG_IMAGE}" --name="${K8S_CLUSTER}"
+
+# Verify the image is available in the kind node
+echo "Verifying image is loaded in kind node..."
+docker exec "${K8S_CLUSTER}-control-plane" crictl images | grep -E "${PACKAGE_NAME}|local.xpkg" || echo "Warning: Image may not be visible via crictl"
 
 INSTALL_YAML="$( cat <<EOF
 apiVersion: pkg.crossplane.io/v1
@@ -214,6 +223,19 @@ echo_step "check kind node cache dir contents"
 docker exec "${K8S_CLUSTER}-control-plane" ls -la /cache
 
 echo_step "waiting for provider to be installed"
+
+# Wait a few seconds for the provider to start reconciling
+sleep 5
+
+# Check provider status for debugging
+echo "Provider status:"
+"${KUBECTL}" get provider "${PACKAGE_NAME}" -o yaml || true
+echo "Provider revision status:"
+"${KUBECTL}" get providerrevision -o yaml || true
+echo "Crossplane pods:"
+"${KUBECTL}" get pods -n crossplane-system || true
+echo "Crossplane pod logs:"
+"${KUBECTL}" logs -n crossplane-system -l app=crossplane --tail=50 || true
 
 kubectl wait "provider.pkg.crossplane.io/${PACKAGE_NAME}" --for=condition=healthy --timeout=180s
 
