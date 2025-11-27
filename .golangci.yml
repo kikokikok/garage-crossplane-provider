@@ -26,12 +26,9 @@ issues:
     - path: zz_generated\.deepcopy\.go
       linters:
         - all
-
-run:
-  timeout: 5m
-  skip-dirs:
+  exclude-dirs:
     - vendor
     - bin
 
-output:
-  format: colored-line-number
+run:
+  timeout: 5m
