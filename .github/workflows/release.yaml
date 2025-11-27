@@ -116,8 +116,7 @@ jobs:
       - name: Verify xpkg and move to repo root
         run: |
           set -euo pipefail
-          VERSION="${DOCKER_METADATA_OUTPUT_VERSION:-0.0.0}"
-          XPkg="package/provider-garage-${VERSION}.xpkg"
+          XPkg="package/provider-garage-${{ steps.get_version.outputs.VERSION }}.xpkg"
 
           echo "Looking for xpkg at: $XPkg"
           if [ ! -f "$XPkg" ]; then
@@ -131,14 +130,12 @@ jobs:
 
           mv "$XPkg" .
           echo "Moved $XPkg to $(pwd)/"
-        env:
-          DOCKER_METADATA_OUTPUT_VERSION: ${{ steps.meta.outputs.version }}
 
       - name: Upload xpkg artifact
         uses: actions/upload-artifact@v4
         with:
           name: provider-xpkg
-          path: provider-garage-v${{ steps.meta.outputs.version }}.xpkg
+          path: provider-garage-${{ steps.get_version.outputs.VERSION }}.xpkg
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
