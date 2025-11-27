@@ -91,6 +91,11 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           file: Dockerfile
 
+      - name: Pull Docker image for xpkg embedding
+        run: |
+          # Pull the image we just pushed so it's available locally for xpkg build
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.get_version.outputs.VERSION }}
+
       - name: Install Crossplane CLI
         run: |
           # Install Crossplane CLI for xpkg build with --embed-runtime-image
