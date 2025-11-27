@@ -181,7 +181,12 @@ jobs:
 
       - name: Get version
         id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          # VERSION_TAG keeps the v prefix for xpkg filenames
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          # DOCKER_TAG strips the v prefix for Docker image references
+          echo "DOCKER_TAG=${VERSION#v}" >> $GITHUB_OUTPUT
 
       - name: Generate CRDs
         run: |
@@ -227,11 +232,17 @@ jobs:
           # Login using the token directly (preferred)
           up login --token "${UP_TOKEN}"
 
+      - name: Pull Docker image for xpkg embedding
+        run: |
+          # Pull the image so it's available locally for xpkg build
+          # Docker image tags use DOCKER_TAG (without 'v' prefix)
+          docker pull ghcr.io/kikokikok/garage-crossplane-provider:${{ steps.get_version.outputs.DOCKER_TAG }}
+
       - name: Build and push to Upbound
         env:
           UPBOUND_REPO: xpkg.upbound.io/${{ secrets.UPBOUND_ORG }}/provider-garage
           VERSION_TAG: ${{ steps.get_version.outputs.VERSION }}
-          CONTROLLER_IMAGE: ghcr.io/kikokikok/garage-crossplane-provider:${{ steps.get_version.outputs.VERSION }}
+          CONTROLLER_IMAGE: ghcr.io/kikokikok/garage-crossplane-provider:${{ steps.get_version.outputs.DOCKER_TAG }}
         run: |
           set -euo pipefail
           
