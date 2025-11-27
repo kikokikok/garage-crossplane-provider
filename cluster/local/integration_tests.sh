@@ -174,13 +174,31 @@ echo_step "--- INTEGRATION TESTS ---"
 # install package
 echo_step "installing ${PROJECT_NAME} into \"${CROSSPLANE_NAMESPACE}\" namespace"
 
+# For Crossplane 2.x, we need a fully qualified OCI image reference
+# The xpkg file is an OCI image, so we can load it as a docker image
+XPKG_IMAGE="${BUILD_REGISTRY}/${PACKAGE_NAME}:${VERSION}"
+
+# Check if we can load the xpkg as a docker image
+if [ -f "${CACHE_PATH}/${PACKAGE_NAME}.gz" ]; then
+  echo "Loading xpkg from ${CACHE_PATH}/${PACKAGE_NAME}.gz"
+  # The xpkg is an OCI tarball, load it and tag appropriately
+  gunzip -c "${CACHE_PATH}/${PACKAGE_NAME}.gz" > "${CACHE_PATH}/${PACKAGE_NAME}.tar" 2>/dev/null || cp "${CACHE_PATH}/${PACKAGE_NAME}.gz" "${CACHE_PATH}/${PACKAGE_NAME}.tar"
+  docker load -i "${CACHE_PATH}/${PACKAGE_NAME}.tar" 2>/dev/null || true
+  # Tag it with our expected name
+  docker tag "${BUILD_REGISTRY}/${PACKAGE_NAME}-${SAFEHOSTARCH}:latest" "${XPKG_IMAGE}" 2>/dev/null || \
+  docker tag "${BUILD_REGISTRY}/${PACKAGE_NAME}-amd64:latest" "${XPKG_IMAGE}" 2>/dev/null || true
+fi
+
+# Load the xpkg image into kind
+"${KIND}" load docker-image "${XPKG_IMAGE}" --name="${K8S_CLUSTER}" 2>/dev/null || echo "Note: xpkg image may already be loaded via controller image"
+
 INSTALL_YAML="$( cat <<EOF
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:
   name: "${PACKAGE_NAME}"
 spec:
-  package: "${PACKAGE_NAME}"
+  package: "${XPKG_IMAGE}"
   packagePullPolicy: Never
 EOF
 )"
