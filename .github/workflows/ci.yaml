@@ -253,6 +253,12 @@ jobs:
       - name: Fetch History
         run: git fetch --prune --unshallow
 
+      - name: Download Build Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: output
+          path: _output
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
@@ -278,6 +284,16 @@ jobs:
 
       - name: Vendor Dependencies
         run: make vendor vendor.check
+
+      - name: Load Docker Images
+        run: |
+          # Load docker images from the build artifacts
+          for img in _output/images/linux_*/*.tar.gz; do
+            if [ -f "$img" ]; then
+              echo "Loading image from $img"
+              docker load -i "$img"
+            fi
+          done
 
       - name: Run Integration Tests
         run: make test-integration
