@@ -1,8 +1,8 @@
-// Package v1beta1 contains the core resources of the Garage provider.
+// Package v1 contains the core resources of the Garage provider.
 // +kubebuilder:object:generate=true
 // +groupName=garage.crossplane.io
-// +versionName=v1beta1
-package v1beta1
+// +versionName=v1
+package v1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -15,7 +15,7 @@ import (
 // Package type metadata.
 const (
 	Group   = "garage.crossplane.io"
-	Version = "v1beta1"
+	Version = "v1"
 )
 
 var (

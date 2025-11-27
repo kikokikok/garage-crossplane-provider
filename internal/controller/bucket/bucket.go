@@ -18,7 +18,7 @@ import (
 	"github.com/crossplane/crossplane-runtime/pkg/resource"
 
 	"github.com/kikokikok/provider-garage/apis/v1alpha1"
-	"github.com/kikokikok/provider-garage/apis/v1beta1"
+	v1 "github.com/kikokikok/provider-garage/apis/v1"
 	"github.com/kikokikok/provider-garage/pkg/garage"
 )
 
@@ -63,7 +63,7 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 		return nil, errors.New(errNotBucket)
 	}
 
-	pc := &v1beta1.ProviderConfig{}
+	pc := &v1.ProviderConfig{}
 	if err := c.kube.Get(ctx, types.NamespacedName{Name: cr.GetProviderConfigReference().Name}, pc); err != nil {
 		return nil, errors.Wrap(err, errGetPC)
 	}
@@ -78,8 +78,10 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 		Endpoint   string `json:"endpoint"`
 		AdminToken string `json:"adminToken"`
 	}{}
-	if err := json.Unmarshal(data, &creds); err != nil {
-		return nil, errors.Wrap(err, errGetCreds)
+	if len(data) > 0 {
+		if err := json.Unmarshal(data, &creds); err != nil {
+			return nil, errors.Wrap(err, errGetCreds)
+		}
 	}
 
 	endpoint := creds.Endpoint
