@@ -91,32 +91,27 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           file: Dockerfile
 
-      - name: Install UP CLI
+      - name: Install Crossplane CLI
         run: |
-          curl -sL https://cli.upbound.io | sh
-          if [ -f up ]; then
-            sudo mv up /usr/local/bin/
-            sudo chmod +x /usr/local/bin/up
-          else
-            echo "ERROR: UP CLI binary not found after install" >&2
-            ls -la
-            exit 1
-          fi
+          # Install Crossplane CLI for xpkg build with --embed-runtime-image
+          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
+          sudo mv crossplane /usr/local/bin/
+          crossplane --version
 
       - name: Create Crossplane package
         run: |
-          # Build the package using UP CLI with embedded controller image
+          # Build the package using Crossplane CLI with embedded controller image
           # The --embed-runtime-image flag embeds the controller image into the xpkg
-          up xpkg build \
+          crossplane xpkg build \
             --package-root=package \
             --embed-runtime-image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.get_version.outputs.VERSION }} \
-            --name=provider-garage-${{ steps.get_version.outputs.VERSION }}.xpkg
+            --package-file=package/provider-garage-${{ steps.get_version.outputs.VERSION }}.xpkg
 
       - name: Verify xpkg and move to repo root
         run: |
           set -euo pipefail
           VERSION="${DOCKER_METADATA_OUTPUT_VERSION:-0.0.0}"
-          XPkg="package/provider-garage-v${VERSION}.xpkg"
+          XPkg="package/provider-garage-${VERSION}.xpkg"
 
           echo "Looking for xpkg at: $XPkg"
           if [ ! -f "$XPkg" ]; then
@@ -199,11 +194,15 @@ jobs:
           # Pattern matches the full image URL to avoid unintended replacements
           sed -i "s|image: ghcr.io/kikokikok/garage-crossplane-provider:.*|image: ${REGISTRY}/${IMAGE_NAME}:${{ steps.get_version.outputs.VERSION }}|" package/crossplane.yaml
 
-      - name: Install UP CLI
+      - name: Install Crossplane CLI and UP CLI
         run: |
+          # Install Crossplane CLI for xpkg build
+          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
+          sudo mv crossplane /usr/local/bin/
+          crossplane --version
+          
+          # Install UP CLI for pushing to Upbound
           curl -sL https://cli.upbound.io | sh
-
-          # Move whichever binary was downloaded
           if [ -f up ]; then
             sudo mv up /usr/local/bin/
             sudo chmod +x /usr/local/bin/up
@@ -233,13 +232,13 @@ jobs:
         run: |
           set -euo pipefail
           
-          # Build the package with embedded controller image
-          up xpkg build \
+          # Build the package with embedded controller image using Crossplane CLI
+          crossplane xpkg build \
             --package-root=package \
             --embed-runtime-image=${CONTROLLER_IMAGE} \
-            --name=provider-garage-${VERSION_TAG}.xpkg
+            --package-file=package/provider-garage-${VERSION_TAG}.xpkg
           
-          # Verify package exists in package/ directory and move to repo root
+          # Verify package exists
           XPkg="package/provider-garage-${VERSION_TAG}.xpkg"
           echo "Looking for xpkg at: $XPkg"
           
@@ -255,7 +254,7 @@ jobs:
           mv "$XPkg" .
           echo "Moved $XPkg to $(pwd)/"
           
-          # Push with version tag
+          # Push with version tag using UP CLI
           up xpkg push ${UPBOUND_REPO}:${VERSION_TAG} \
             -f provider-garage-${VERSION_TAG}.xpkg
           
