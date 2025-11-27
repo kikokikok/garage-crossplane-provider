@@ -94,7 +94,8 @@ jobs:
       - name: Pull Docker image for xpkg embedding
         run: |
           # Pull the image we just pushed so it's available locally for xpkg build
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.get_version.outputs.VERSION }}
+          # Use the version from docker metadata which strips the 'v' prefix
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
 
       - name: Install Crossplane CLI
         run: |
@@ -109,7 +110,7 @@ jobs:
           # The --embed-runtime-image flag embeds the controller image into the xpkg
           crossplane xpkg build \
             --package-root=package \
-            --embed-runtime-image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.get_version.outputs.VERSION }} \
+            --embed-runtime-image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }} \
             --package-file=package/provider-garage-${{ steps.get_version.outputs.VERSION }}.xpkg
 
       - name: Verify xpkg and move to repo root
