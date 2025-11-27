@@ -53,7 +53,7 @@ kubectl create secret generic garage-credentials \
 Create a ProviderConfig:
 
 ```yaml
-apiVersion: garage.crossplane.io/v1beta1
+apiVersion: garage.crossplane.io/v1
 kind: ProviderConfig
 metadata:
   name: default
@@ -245,7 +245,7 @@ provider-garage/
 │   └── release.yaml       # Release automation
 ├── apis/                   # API type definitions
 │   ├── v1alpha1/          # Managed resource types
-│   └── v1beta1/           # ProviderConfig types
+│   └── v1/           # ProviderConfig types
 ├── cmd/provider/          # Provider entry point
 ├── config/                # Kubernetes manifests
 │   └── crd/bases/        # Generated CRDs
