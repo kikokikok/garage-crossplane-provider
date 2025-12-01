@@ -104,14 +104,30 @@ func (e *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 		return managed.ExternalObservation{}, errors.New(errNotBucket)
 	}
 
-	if cr.Status.AtProvider.ID == "" {
-		return managed.ExternalObservation{
-			ResourceExists: false,
-		}, nil
+	var bucket *garage.Bucket
+	var err error
+
+	// Try to find by ID first
+	if cr.Status.AtProvider.ID != "" {
+		bucket, err = e.client.GetBucket(ctx, cr.Status.AtProvider.ID)
+		if err != nil {
+			// Bucket doesn't exist by ID, clear the ID and try by alias
+			cr.Status.AtProvider.ID = ""
+		}
 	}
 
-	bucket, err := e.client.GetBucket(ctx, cr.Status.AtProvider.ID)
-	if err != nil {
+	// If no ID or ID lookup failed, try by globalAlias
+	if bucket == nil && cr.Spec.ForProvider.GlobalAlias != nil && *cr.Spec.ForProvider.GlobalAlias != "" {
+		bucket, err = e.client.GetBucketByAlias(ctx, *cr.Spec.ForProvider.GlobalAlias)
+		if err != nil {
+			// Bucket doesn't exist
+			return managed.ExternalObservation{
+				ResourceExists: false,
+			}, nil
+		}
+	}
+
+	if bucket == nil {
 		return managed.ExternalObservation{
 			ResourceExists: false,
 		}, nil

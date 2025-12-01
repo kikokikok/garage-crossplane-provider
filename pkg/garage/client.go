@@ -125,6 +125,16 @@ func (c *Client) GetBucket(ctx context.Context, bucketID string) (*Bucket, error
 	return &result, nil
 }
 
+// GetBucketByAlias retrieves a bucket by global alias
+func (c *Client) GetBucketByAlias(ctx context.Context, globalAlias string) (*Bucket, error) {
+	var result Bucket
+	err := c.doRequest(ctx, "GET", "/v1/bucket?globalAlias="+globalAlias, nil, &result)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // DeleteBucket deletes a bucket
 func (c *Client) DeleteBucket(ctx context.Context, bucketID string) error {
 	return c.doRequest(ctx, "DELETE", "/v1/bucket?id="+bucketID, nil, nil)
