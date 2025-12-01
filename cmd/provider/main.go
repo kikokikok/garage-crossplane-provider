@@ -18,6 +18,8 @@ import (
 
 	"github.com/kikokikok/provider-garage/apis"
 	"github.com/kikokikok/provider-garage/internal/controller/bucket"
+	"github.com/kikokikok/provider-garage/internal/controller/key"
+	"github.com/kikokikok/provider-garage/internal/controller/keyaccess"
 )
 
 func main() {
@@ -60,6 +62,8 @@ func main() {
 	}
 
 	kingpin.FatalIfError(bucket.Setup(mgr, o), "Cannot setup Bucket controller")
+	kingpin.FatalIfError(key.Setup(mgr, o), "Cannot setup Key controller")
+	kingpin.FatalIfError(keyaccess.Setup(mgr, o), "Cannot setup KeyAccess controller")
 
 	kingpin.FatalIfError(mgr.Start(ctrl.SetupSignalHandler()), "Cannot start controller manager")
 }
