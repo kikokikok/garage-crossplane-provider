@@ -215,6 +215,29 @@ func (c *Client) GetKey(ctx context.Context, accessKeyID string) (*Key, error) {
 	return &result, nil
 }
 
+// GetKeyByName searches for a key by name pattern and returns it if exactly one match is found
+func (c *Client) GetKeyByName(ctx context.Context, name string) (*Key, error) {
+	var results []KeyInfo
+	err := c.doRequest(ctx, "GET", "/v1/key?search="+name, nil, &results)
+	if err != nil {
+		return nil, err
+	}
+	// Find exact match
+	for _, k := range results {
+		if k.Name == name {
+			// Get full key details
+			return c.GetKey(ctx, k.ID)
+		}
+	}
+	return nil, fmt.Errorf("key with name %q not found", name)
+}
+
+// KeyInfo represents basic key information from list/search
+type KeyInfo struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 // DeleteKey deletes a key
 func (c *Client) DeleteKey(ctx context.Context, accessKeyID string) error {
 	return c.doRequest(ctx, "DELETE", "/v1/key?id="+accessKeyID, nil, nil)

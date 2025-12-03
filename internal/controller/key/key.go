@@ -106,18 +106,30 @@ func (e *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 		return managed.ExternalObservation{}, errors.New(errNotKey)
 	}
 
-	// If we don't have an access key ID, the resource doesn't exist
-	if cr.Status.AtProvider.AccessKeyID == "" {
-		return managed.ExternalObservation{
-			ResourceExists: false,
-		}, nil
+	var key *garage.Key
+	var err error
+
+	// Try to find by ID first
+	if cr.Status.AtProvider.AccessKeyID != "" {
+		key, err = e.client.GetKey(ctx, cr.Status.AtProvider.AccessKeyID)
+		if err != nil {
+			// Key doesn't exist by ID, clear the ID and try by name
+			cr.Status.AtProvider.AccessKeyID = ""
+		}
 	}
 
-	// Try to get the key from Garage
-	key, err := e.client.GetKey(ctx, cr.Status.AtProvider.AccessKeyID)
-	if err != nil {
-		// Key doesn't exist
-		cr.Status.AtProvider.AccessKeyID = ""
+	// If no ID or ID lookup failed, try by name
+	if key == nil && cr.Spec.ForProvider.Name != "" {
+		key, err = e.client.GetKeyByName(ctx, cr.Spec.ForProvider.Name)
+		if err != nil {
+			// Key doesn't exist
+			return managed.ExternalObservation{
+				ResourceExists: false,
+			}, nil
+		}
+	}
+
+	if key == nil {
 		return managed.ExternalObservation{
 			ResourceExists: false,
 		}, nil
@@ -129,6 +141,10 @@ func (e *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 	return managed.ExternalObservation{
 		ResourceExists:   true,
 		ResourceUpToDate: true,
+		// Return connection details on observe so secret gets created for existing keys
+		ConnectionDetails: managed.ConnectionDetails{
+			"accessKeyId": []byte(key.AccessKeyID),
+		},
 	}, nil
 }
 

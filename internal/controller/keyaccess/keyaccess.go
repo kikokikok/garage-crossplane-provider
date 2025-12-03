@@ -242,6 +242,10 @@ func (e *external) resolveBucketID(ctx context.Context, cr *v1alpha1.KeyAccess) 
 		if err != nil {
 			return "", err
 		}
+		// Check if the Bucket has been reconciled and has an ID
+		if bucket.Status.AtProvider.ID == "" {
+			return "", errors.New("referenced Bucket has not been reconciled yet (ID is empty)")
+		}
 		return bucket.Status.AtProvider.ID, nil
 	}
 
@@ -262,6 +266,10 @@ func (e *external) resolveAccessKeyID(ctx context.Context, cr *v1alpha1.KeyAcces
 		}, key)
 		if err != nil {
 			return "", err
+		}
+		// Check if the Key has been reconciled and has an AccessKeyID
+		if key.Status.AtProvider.AccessKeyID == "" {
+			return "", errors.New("referenced Key has not been reconciled yet (AccessKeyID is empty)")
 		}
 		return key.Status.AtProvider.AccessKeyID, nil
 	}
