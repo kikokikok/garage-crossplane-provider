@@ -23,14 +23,14 @@ import (
 )
 
 const (
-	errNotKeyAccess    = "managed resource is not a KeyAccess custom resource"
-	errTrackPCUsage    = "cannot track ProviderConfig usage"
-	errGetPC           = "cannot get ProviderConfig"
-	errGetCreds        = "cannot get credentials"
-	errGrantAccess     = "cannot grant key access"
-	errRevokeAccess    = "cannot revoke key access"
-	errResolveBucket   = "cannot resolve bucket reference"
-	errResolveKey      = "cannot resolve key reference"
+	errNotKeyAccess  = "managed resource is not a KeyAccess custom resource"
+	errTrackPCUsage  = "cannot track ProviderConfig usage"
+	errGetPC         = "cannot get ProviderConfig"
+	errGetCreds      = "cannot get credentials"
+	errGrantAccess   = "cannot grant key access"
+	errRevokeAccess  = "cannot revoke key access"
+	errResolveBucket = "cannot resolve bucket reference"
+	errResolveKey    = "cannot resolve key reference"
 )
 
 // Setup adds a controller that reconciles KeyAccess managed resources.
