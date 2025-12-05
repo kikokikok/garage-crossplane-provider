@@ -152,10 +152,10 @@ func (e *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 	return managed.ExternalObservation{
 		ResourceExists:   true,
 		ResourceUpToDate: true,
-		// Return connection details on observe so secret gets created for existing keys
-		ConnectionDetails: managed.ConnectionDetails{
-			"accessKeyId": []byte(key.AccessKeyID),
-		},
+		// Do NOT return connection details here.
+		// The secret key is not returned by the API on GET, only on CREATE.
+		// Returning partial details (ID only) causes Crossplane to overwrite
+		// the existing secret (which has the secret key), effectively deleting it.
 	}, nil
 }
 
